@@ -9,6 +9,7 @@ target/
 backend/target/
 dist/
 build/
+*.tsbuildinfo
 
 # Logs
 *.log
