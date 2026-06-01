@@ -77,7 +77,7 @@ psql -U postgres -d novel_ai_copilot -c "\dt"
 
 你的 API Key 已配置：
 ```
-sk-fbb41fbcb5da4e479feeb9fbea233ac8
+sk-xxx
 ```
 
 此 Key 已在 `application.yml` 中设为默认值，无需额外配置。
@@ -97,7 +97,7 @@ start.bat
 cd d:\aiProject\ai-created-novel\novel-ai-copilot\backend
 
 # 设置环境变量（如果 YAML 配置不生效）
-set AI_API_KEY=sk-fbb41fbcb5da4e479feeb9fbea233ac8
+set AI_API_KEY=sk-xxx
 set AI_BASE_URL=https://api.deepseek.com/v1
 set DB_PASSWORD=postgres
 

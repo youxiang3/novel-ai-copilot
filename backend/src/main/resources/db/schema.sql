@@ -34,6 +34,24 @@ COMMENT ON COLUMN "user".update_time IS '更新时间';
 CREATE INDEX idx_user_username ON "user"(username);
 
 -- ============================================
+-- 1.1 user_model_config (用户模型配置)
+-- ============================================
+CREATE TABLE IF NOT EXISTS user_model_config (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID NOT NULL,
+    provider VARCHAR(50) NOT NULL DEFAULT 'deepseek',
+    base_url VARCHAR(500) NOT NULL,
+    model VARCHAR(100) NOT NULL,
+    api_key_encrypted TEXT,
+    active BOOLEAN DEFAULT true,
+    create_time TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    update_time TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_user_model_config_user FOREIGN KEY (user_id) REFERENCES "user"(id) ON DELETE CASCADE
+);
+
+CREATE INDEX idx_user_model_config_user ON user_model_config(user_id, active);
+
+-- ============================================
 -- 2. novel (小说总表)
 -- ============================================
 CREATE TABLE IF NOT EXISTS novel (

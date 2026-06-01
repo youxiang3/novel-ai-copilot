@@ -5,6 +5,8 @@ import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.HandlerInterceptor;
 
+import java.nio.charset.StandardCharsets;
+
 @Component
 public class JwtInterceptor implements HandlerInterceptor {
 
@@ -16,6 +18,14 @@ public class JwtInterceptor implements HandlerInterceptor {
 
     @Override
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) throws Exception {
+        if ("OPTIONS".equalsIgnoreCase(request.getMethod())) {
+            return true;
+        }
+
+        if ("/api/model-config/test".equals(request.getRequestURI()) && "POST".equalsIgnoreCase(request.getMethod())) {
+            return true;
+        }
+
         String authHeader = request.getHeader("Authorization");
         
         if (authHeader != null && authHeader.startsWith("Bearer ")) {
@@ -26,8 +36,11 @@ public class JwtInterceptor implements HandlerInterceptor {
                 return true;
             }
         }
-        
-        return true;
+
+        response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+        response.setContentType("application/json;charset=UTF-8");
+        response.getOutputStream().write("{\"code\":401,\"message\":\"unauthorized\",\"data\":null}".getBytes(StandardCharsets.UTF_8));
+        return false;
     }
 
     @Override

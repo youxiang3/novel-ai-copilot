@@ -3,21 +3,23 @@
 @tailwind utilities;
 
 :root {
-  --background: 0 0% 100%;
-  --foreground: 222.2 84% 4.9%;
+  --background: 190 38% 98%;
+  --foreground: 222 42% 16%;
   --card: 0 0% 100%;
-  --card-foreground: 222.2 84% 4.9%;
-  --primary: 221.2 83.2% 53.3%;
-  --primary-foreground: 210 40% 98%;
-  --secondary: 210 40% 96.1%;
-  --secondary-foreground: 222.2 47.4% 11.2%;
-  --muted: 210 40% 96.1%;
-  --muted-foreground: 215.4 16.3% 46.9%;
-  --accent: 210 40% 96.1%;
-  --accent-foreground: 222.2 47.4% 11.2%;
-  --border: 214.3 31.8% 91.4%;
-  --input: 214.3 31.8% 91.4%;
-  --ring: 221.2 83.2% 53.3%;
+  --card-foreground: 222 42% 16%;
+  --primary: 177 72% 31%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 186 38% 94%;
+  --secondary-foreground: 210 34% 22%;
+  --muted: 188 36% 94%;
+  --muted-foreground: 213 16% 45%;
+  --accent: 42 82% 94%;
+  --accent-foreground: 212 34% 22%;
+  --border: 190 27% 87%;
+  --input: 190 27% 84%;
+  --ring: 177 72% 31%;
+  --destructive: 0 72% 51%;
+  --destructive-foreground: 0 0% 100%;
   --radius: 0.5rem;
 }
 
@@ -45,5 +47,33 @@
   }
   body {
     @apply bg-background text-foreground;
+    background:
+      linear-gradient(90deg, hsl(190 35% 91% / 0.28) 1px, transparent 1px),
+      linear-gradient(hsl(190 35% 91% / 0.28) 1px, transparent 1px),
+      radial-gradient(circle at 12% 10%, hsl(177 72% 80% / 0.18), transparent 28%),
+      hsl(var(--background));
+    background-size: 28px 28px, 28px 28px, auto, auto;
+  }
+}
+
+@layer utilities {
+  .paper-panel {
+    background:
+      linear-gradient(180deg, hsl(0 0% 100% / 0.94), hsl(185 35% 98% / 0.94)),
+      repeating-linear-gradient(0deg, transparent 0, transparent 31px, hsl(190 27% 87% / 0.38) 32px);
+  }
+
+  .soft-grid {
+    background-image:
+      linear-gradient(90deg, hsl(190 27% 87% / 0.45) 1px, transparent 1px),
+      linear-gradient(hsl(190 27% 87% / 0.45) 1px, transparent 1px);
+    background-size: 24px 24px;
+  }
+
+  .ink-pattern {
+    background:
+      linear-gradient(135deg, hsl(177 72% 31% / 0.10), transparent 38%),
+      radial-gradient(circle at 80% 18%, hsl(42 82% 68% / 0.22), transparent 24%),
+      linear-gradient(180deg, hsl(0 0% 100% / 0.92), hsl(190 38% 98% / 0.92));
   }
 }

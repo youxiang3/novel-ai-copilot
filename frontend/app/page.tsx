@@ -15,6 +15,7 @@ import {
   FileText,
   Flame,
   Image,
+  KeyRound,
   Layers3,
   ListTree,
   Loader2,
@@ -31,6 +32,7 @@ import {
   Scissors,
   Search,
   Send,
+  Settings2,
   Sparkles,
   Square,
   Wand2,
@@ -41,7 +43,7 @@ import { cn } from '@/lib/utils'
 type ChapterStatus = 'draft' | 'published'
 type LoreCategory = 'character' | 'location' | 'item' | 'faction'
 type RightTab = 'starter' | 'copilot' | 'factory' | 'inspector'
-type LeftTab = 'chapters' | 'lore' | 'ideas'
+type LeftTab = 'overview' | 'chapters' | 'lore' | 'ideas'
 type AssistantMode = 'editor' | 'partner' | 'planner'
 type StarterField = 'genre' | 'tone' | 'hook' | 'protagonist' | 'world' | 'opening'
 type WritingSkill = 'suspense' | 'sensory' | 'conflict' | 'hook' | 'metaphor'
@@ -80,6 +82,15 @@ interface PromptSnapshot {
   scene: string
 }
 
+interface StoryProfile {
+  logline: string
+  outline: string
+  protagonist: string
+  worldRules: string
+  storyArc: string
+  currentThread: string
+}
+
 interface StarterQuestion {
   field: StarterField
   title: string
@@ -103,10 +114,75 @@ interface WorkspaceSnapshot {
   starterStep: number
   starterAnswers: StarterAnswers
   selectedWritingSkill: WritingSkill
+  modelConfig?: ModelConfig
+  storyProfile?: StoryProfile
+}
+
+interface ApiResult<T> {
+  code: number
+  message: string
+  data: T
+}
+
+interface BackendNovel {
+  id: string
+  title: string
+  globalOutline?: string | null
+  authorStylePrompt?: string | null
+}
+
+interface BackendChapter {
+  id: string
+  novelId: string
+  chapterNumber: number
+  title: string
+  content: string
+  wordCount?: number
+  status?: string
+}
+
+interface BackendLore {
+  id: string
+  novelId: string
+  category: string
+  name: string
+  content: string
+}
+
+interface AuthPayload {
+  userId: string
+  username: string
+  token: string
+}
+
+interface ModelConfig {
+  provider: 'deepseek' | 'openai' | 'siliconflow' | 'openrouter' | 'custom'
+  baseUrl: string
+  model: string
+  apiKey: string
+  apiKeyConfigured?: boolean
 }
 
 const novelId = '123e4567-e89b-12d3-a456-426614174000'
 const workspaceStorageKey = 'novel-ai-copilot-workspace-v1'
+const authStorageKey = 'novel-ai-copilot-auth'
+const localAccountsStorageKey = 'novel-ai-copilot-local-accounts'
+
+const defaultModelConfig: ModelConfig = {
+  provider: 'deepseek',
+  baseUrl: 'https://api.deepseek.com/v1',
+  model: 'deepseek-chat',
+  apiKey: '',
+}
+
+const initialStoryProfile: StoryProfile = {
+  logline: '山村少年带着父母遗物踏入修仙界，发现自己被隐藏的血脉牵进一场旧案。',
+  outline: '林青云离开山村后，围绕玉佩、玄天剑残片和林家血脉逐步揭开父母失踪真相。前期以紫云宗试炼为主线，中期进入宗门势力斗争，后期回收林家旧案和上古残剑伏笔。',
+  protagonist: '林青云，十八岁山村少年，克制、倔强，想查清父母失踪真相，害怕牵连师父。',
+  worldRules: '宗门以灵根定命，林家血脉被视为禁忌。玉佩与玄天剑残片会共鸣，暗示主角身世并不普通。',
+  storyArc: '离乡遇袭 -> 紫云试炼 -> 残剑共鸣 -> 身世追索 -> 宗门暗线 -> 林家旧案。',
+  currentThread: '玉佩、玄天剑残片和紫云宗试炼是当前最重要的三条追读线。',
+}
 
 const initialChapters: Chapter[] = [
   {
@@ -180,6 +256,52 @@ const initialLore: LoreItem[] = [
 const initialIdeas = ['雨夜客栈中玉佩发烫，窗外有人倒挂偷听', '苏婉儿发现林青云体内灵脉像被人为封住', '玄天剑残片只在月光下显出第二行铭文']
 
 const stylePrompt = '偏传统仙侠，句式克制，动作和环境细节带出情绪，避免口号式热血。'
+
+function createBlankChapter(title = '第一章：未命名章节'): Chapter {
+  return {
+    id: `chapter-${Date.now()}`,
+    number: 1,
+    title,
+    content: '',
+    status: 'draft',
+    summary: '新作品草稿，等待填写第一章核心冲突。',
+    tension: 50,
+    satisfaction: 50,
+    mystery: 50,
+  }
+}
+
+function createStoryProfile(title: string, answers: StarterAnswers, idea = ''): StoryProfile {
+  const hook = idea.trim() || answers.hook
+  return {
+    logline: `${title}：${hook}`,
+    outline: `${answers.genre}方向，主角因“${hook}”卷入初始危机。故事以“${answers.opening}”切入，围绕主角欲望、世界规则和长线秘密逐步升级。`,
+    protagonist: answers.protagonist,
+    worldRules: answers.world,
+    storyArc: `开篇危机 -> 主角被迫选择 -> 进入核心场域 -> 第一次反击 -> 长线秘密露出 -> 更大势力介入。`,
+    currentThread: `当前优先推进：${answers.opening}；持续埋设：${hook}`,
+  }
+}
+
+function createStarterLore(title: string, profile: StoryProfile): LoreItem[] {
+  const now = Date.now()
+  return [
+    {
+      id: `lore-character-${now}`,
+      category: 'character',
+      name: `${title}主角`,
+      tags: ['主角', '成长线', '待命名'],
+      content: profile.protagonist,
+    },
+    {
+      id: `lore-world-${now}`,
+      category: 'faction',
+      name: `${title}世界规则`,
+      tags: ['世界观', '规则', '冲突来源'],
+      content: profile.worldRules,
+    },
+  ]
+}
 
 const writingSkillPrompts: Record<WritingSkill, { label: string; prompt: string }> = {
   suspense: {
@@ -290,6 +412,139 @@ function createStarterPlan(answers: StarterAnswers) {
   ]
 }
 
+function createGuideOutput(answers: StarterAnswers, chapter: Chapter, entities: LoreItem[]) {
+  const plan = [
+    `本章目标：围绕“${answers.hook}”继续加压，让主角从被动承受转向主动选择。`,
+    `下一段冲突：用“${answers.opening}”作为切入，让外部威胁、误会或关键道具异变立刻发生。`,
+    `情绪推进：保持“${answers.tone}”，先压低处境，再给一个小反击或新证据。`,
+    `结尾钩子：把“${answers.world}”中的规则或禁忌露出一角，但不要一次解释完。`,
+  ]
+  const nextScene = answers.opening || `承接${chapter.title}最后一段，写出主角的下一步选择`
+  const continuation = createLocalExpansion(nextScene, chapter, entities)
+
+  return `创作方案（用于${chapter.title}）
+
+${plan.map((item, index) => `${index + 1}. ${item}`).join('\n')}
+
+---
+可直接续写段落：
+${continuation.trim()}`
+}
+
+function createIdeaBlueprint(idea: string, answers: StarterAnswers) {
+  return `故事骨架
+
+一句话卖点：${idea || answers.hook}
+
+题材方向：${answers.genre}
+阅读情绪：${answers.tone}
+主角核心：${answers.protagonist}
+世界冲突：${answers.world}
+第一幕画面：${answers.opening}
+
+第一章建议：
+1. 前 300 字直接给出冲突或羞辱，不要先讲世界观。
+2. 用一个异常物件、秘密身份或反常反应做悬念。
+3. 结尾让主角做出主动选择，而不是被动等事件发生。
+
+前 5 章推进：
+1. 第一章：危机出现，主角被迫暴露第一个秘密。
+2. 第二章：反派加压，主角发现规则并不公平。
+3. 第三章：第一次小反击，爽点释放但留下更大代价。
+4. 第四章：进入新场域，遇到关键同伴或对手。
+5. 第五章：长线钩子露出一角，推动读者继续追。`
+}
+
+function inferStarterAnswersFromIdea(idea: string, current: StarterAnswers): StarterAnswers {
+  const normalized = idea.trim()
+  const genre = /退婚|宗门|剑|修仙|灵根|仙|玄/.test(normalized)
+    ? '东方玄幻'
+    : /末日|诡|规则|无限|副本/.test(normalized)
+      ? '悬疑无限流'
+      : /都市|异能|校花|公司/.test(normalized)
+        ? '都市异能'
+        : current.genre
+  const tone = /打脸|反杀|复仇|羞辱/.test(normalized) ? '压抑后反杀' : current.tone
+  const hook = normalized || current.hook
+  const protagonist = normalized
+    ? `主角来自这条脑洞：${normalized}。他需要一个明确欲望、一个被压迫处境，以及一个暂时不能公开的秘密。`
+    : current.protagonist
+  const world = /宗门|灵根|修仙|剑/.test(normalized)
+    ? '宗门、血脉、天赋等级或禁忌规则制造压迫，主角需要在不公平规则里找到破局点。'
+    : current.world
+  const opening = /退婚/.test(normalized)
+    ? '退婚现场，众人围观羞辱主角，主角体内隐藏力量第一次回应。'
+    : current.opening
+
+  return { genre, tone, hook, protagonist, world, opening }
+}
+
+function getDynamicStarterChips(question: StarterQuestion, answers: StarterAnswers, chapter: Chapter) {
+  const text = `${answers.genre}\n${answers.tone}\n${answers.hook}\n${answers.protagonist}\n${answers.world}\n${answers.opening}\n${chapter.title}\n${chapter.summary}\n${chapter.content}`.toLowerCase()
+  const chips = new Set<string>(question.chips)
+
+  if (question.field === 'genre') {
+    if (/退婚|宗门|剑|修仙|灵根|玄/.test(text)) {
+      ;['东方玄幻', '宗门修仙', '废柴逆袭'].forEach((item) => chips.add(item))
+    }
+    if (/公司|都市|异能|校花|富豪/.test(text)) {
+      ;['都市异能', '都市逆袭', '商战爽文'].forEach((item) => chips.add(item))
+    }
+    if (/尸|案|诡|规则|副本|无限/.test(text)) {
+      ;['悬疑无限流', '规则怪谈', '诡异复苏'].forEach((item) => chips.add(item))
+    }
+  }
+
+  if (question.field === 'tone') {
+    if (/羞辱|退婚|打脸|反杀/.test(text)) {
+      ;['压抑后反杀', '打脸释放', '爽点爆发'].forEach((item) => chips.add(item))
+    }
+    if (/诡|尸|案|秘密/.test(text)) {
+      ;['诡异不安', '悬疑拉扯', '真相逼近'].forEach((item) => chips.add(item))
+    }
+    if (/女主|情感|温柔|陪伴/.test(text)) {
+      ;['暧昧拉扯', '温暖治愈', '宿命感'].forEach((item) => chips.add(item))
+    }
+  }
+
+  if (question.field === 'hook') {
+    if (/剑|玉佩|血脉|残片/.test(text)) {
+      ;['体内封印上古力量', '父母遗物牵出身世谜', '废柴身份是假象'].forEach((item) => chips.add(item))
+    }
+    if (/退婚|羞辱/.test(text)) {
+      ;['退婚现场当众反击', '被羞辱后觉醒底牌', '所有人看错主角'].forEach((item) => chips.add(item))
+    }
+    if (/当前|章节|草稿/.test(text)) {
+      ;['本章抛出新问题', '结尾出现反转证据', '配角一句话改变局势'].forEach((item) => chips.add(item))
+    }
+  }
+
+  if (question.field === 'protagonist') {
+    ['想证明自己', '害怕拖累重要的人', '藏着不能说的秘密', '被所有人低估'].forEach((item) => chips.add(item))
+    if (chapter.content.length > 200) {
+      ;['延续当前章节的选择压力', '让主角主动做决定', '补一个情绪爆点'].forEach((item) => chips.add(item))
+    }
+  }
+
+  if (question.field === 'world') {
+    if (/宗门|修仙|灵根|剑/.test(text)) {
+      ;['宗门以灵根定命', '禁忌血脉被追杀', '上古残剑牵出旧案'].forEach((item) => chips.add(item))
+    }
+    ['势力规则制造不公平', '秘密只能通过冲突揭开', '主角越强代价越大'].forEach((item) => chips.add(item))
+  }
+
+  if (question.field === 'opening') {
+    if (chapter.content.length > 200) {
+      ;['从当前章节最后一句继续', '让反派突然加压', '让关键道具异变', '让同伴误会主角'].forEach((item) => chips.add(item))
+    }
+    if (/退婚|羞辱/.test(text)) {
+      ;['退婚现场', '众人围观羞辱', '主角底牌第一次回应'].forEach((item) => chips.add(item))
+    }
+  }
+
+  return Array.from(chips).slice(0, 8)
+}
+
 async function readStream(response: Response, onChunk: (chunk: string) => void) {
   const reader = response.body?.getReader()
   if (!reader) return
@@ -307,14 +562,161 @@ async function readStream(response: Response, onChunk: (chunk: string) => void) 
   }
 }
 
+async function apiRequest<T>(path: string, options: RequestInit = {}, token?: string | null) {
+  const response = await fetch(path, {
+    ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...options.headers,
+    },
+  })
+
+  if (!response.ok) {
+    throw new Error(`Request failed: ${response.status}`)
+  }
+
+  const result = await response.json() as ApiResult<T>
+  if (result.code !== 200) {
+    throw new Error(result.message || 'Request failed')
+  }
+  return result.data
+}
+
+function mapBackendChapter(chapter: BackendChapter): Chapter {
+  return {
+    id: chapter.id,
+    number: chapter.chapterNumber,
+    title: chapter.title || `第${chapter.chapterNumber}章：未命名章节`,
+    content: chapter.content || '',
+    status: chapter.status === 'published' ? 'published' : 'draft',
+    summary: '暂无摘要。',
+    tension: 50,
+    satisfaction: 50,
+    mystery: 50,
+  }
+}
+
+function mapBackendLore(item: BackendLore): LoreItem {
+  const category = item.category === 'sect' || item.category === 'world_rule'
+    ? 'faction'
+    : ['character', 'location', 'item', 'faction'].includes(item.category) ? item.category as LoreCategory : 'faction'
+  return {
+    id: item.id,
+    category,
+    name: item.name || '未命名设定',
+    content: item.content || '',
+    tags: [category],
+  }
+}
+
+function toChapterPayload(chapter: Chapter, activeNovelId: string) {
+  return {
+    novelId: activeNovelId,
+    chapterNumber: chapter.number,
+    title: chapter.title,
+    content: chapter.content,
+    wordCount: countWords(chapter.content),
+    status: chapter.status,
+  }
+}
+
+function toLorePayload(item: LoreItem, activeNovelId: string) {
+  return {
+    novelId: activeNovelId,
+    category: item.category === 'faction' ? 'sect' : item.category,
+    name: item.name,
+    content: item.content,
+  }
+}
+
+function isUuid(value: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)
+}
+
+function isLocalAuthToken(token: string | null) {
+  return Boolean(token?.startsWith('local-'))
+}
+
+function readLocalAccounts() {
+  if (typeof window === 'undefined') return {} as Record<string, string>
+  try {
+    return JSON.parse(window.localStorage.getItem(localAccountsStorageKey) || '{}') as Record<string, string>
+  } catch {
+    return {}
+  }
+}
+
+function createLocalAuth(username: string): AuthPayload {
+  return {
+    userId: `local-${username}`,
+    username,
+    token: `local-${username}-${Date.now()}`,
+  }
+}
+
+function localNovelsStorageKey(username: string) {
+  return `novel-ai-copilot-local-novels-${username}`
+}
+
+function localActiveNovelStorageKey(username: string) {
+  return `novel-ai-copilot-local-active-novel-${username}`
+}
+
+function localWorkspaceStorageKey(username: string, novelId: string) {
+  return `novel-ai-copilot-local-workspace-${username}-${novelId}`
+}
+
+function readLocalNovels(username: string) {
+  if (typeof window === 'undefined') return [] as BackendNovel[]
+  try {
+    return JSON.parse(window.localStorage.getItem(localNovelsStorageKey(username)) || '[]') as BackendNovel[]
+  } catch {
+    return []
+  }
+}
+
+function readLocalWorkspace(username: string, novelId: string) {
+  if (typeof window === 'undefined') return null
+  try {
+    return JSON.parse(window.localStorage.getItem(localWorkspaceStorageKey(username, novelId)) || 'null') as Partial<WorkspaceSnapshot> | null
+  } catch {
+    return null
+  }
+}
+
+function recoverLegacyLocalNovel(username: string) {
+  if (typeof window === 'undefined') return { novels: [] as BackendNovel[], activeNovelId: null as string | null }
+  try {
+    const legacy = JSON.parse(window.localStorage.getItem(workspaceStorageKey) || 'null') as Partial<WorkspaceSnapshot> | null
+    if (!legacy?.chapters?.length) {
+      return { novels: [], activeNovelId: null }
+    }
+
+    const recoveredNovel: BackendNovel = {
+      id: `local-recovered-${Date.now()}`,
+      title: legacy.chapters[0]?.title?.replace(/^第一章[：:]\s*/, '') || '恢复的本地作品',
+      globalOutline: legacy.chapters[0]?.summary || null,
+      authorStylePrompt: null,
+    }
+    window.localStorage.setItem(localNovelsStorageKey(username), JSON.stringify([recoveredNovel]))
+    window.localStorage.setItem(localActiveNovelStorageKey(username), recoveredNovel.id)
+    window.localStorage.setItem(localWorkspaceStorageKey(username, recoveredNovel.id), JSON.stringify(legacy))
+    return { novels: [recoveredNovel], activeNovelId: recoveredNovel.id }
+  } catch {
+    return { novels: [], activeNovelId: null }
+  }
+}
+
 export default function Home() {
   const [chapters, setChapters] = useState(initialChapters)
   const [activeChapterId, setActiveChapterId] = useState(initialChapters[0].id)
   const [lore, setLore] = useState(initialLore)
   const [ideas, setIdeas] = useState(initialIdeas)
+  const [storyProfile, setStoryProfile] = useState<StoryProfile>(initialStoryProfile)
   const [editingLoreId, setEditingLoreId] = useState<string | null>(null)
   const [loreSearch, setLoreSearch] = useState('')
-  const [leftTab, setLeftTab] = useState<LeftTab>('chapters')
+  const [leftTab, setLeftTab] = useState<LeftTab>('overview')
   const [rightTab, setRightTab] = useState<RightTab>('starter')
   const [leftOpen, setLeftOpen] = useState(true)
   const [rightOpen, setRightOpen] = useState(true)
@@ -335,6 +737,25 @@ export default function Home() {
   const [starterOutput, setStarterOutput] = useState('')
   const [isHydrated, setIsHydrated] = useState(false)
   const [selectedWritingSkill, setSelectedWritingSkill] = useState<WritingSkill>('suspense')
+  const [authToken, setAuthToken] = useState<string | null>(null)
+  const [username, setUsername] = useState('')
+  const [password, setPassword] = useState('')
+  const [currentUser, setCurrentUser] = useState<string | null>(null)
+  const [novels, setNovels] = useState<BackendNovel[]>([])
+  const [activeNovelId, setActiveNovelId] = useState<string | null>(null)
+  const [newNovelTitle, setNewNovelTitle] = useState('新的长篇小说')
+  const [newNovelIdea, setNewNovelIdea] = useState('')
+  const [syncState, setSyncState] = useState<'local' | 'syncing' | 'synced' | 'error'>('local')
+  const [syncMessage, setSyncMessage] = useState('本地原型模式')
+  const [showIdeaStart, setShowIdeaStart] = useState(true)
+  const [rawIdea, setRawIdea] = useState('被退婚少年体内封着上古剑魂，第一章想打脸未婚妻家族')
+  const [ideaBlueprint, setIdeaBlueprint] = useState('')
+  const [showSyncPanel, setShowSyncPanel] = useState(false)
+  const [showModelPanel, setShowModelPanel] = useState(false)
+  const [modelConfig, setModelConfig] = useState<ModelConfig>(defaultModelConfig)
+  const [modelTestResult, setModelTestResult] = useState('')
+  const [codexTask, setCodexTask] = useState('')
+  const [codexResult, setCodexResult] = useState('')
   const abortRef = useRef<AbortController | null>(null)
 
   const activeChapter = chapters.find((chapter) => chapter.id === activeChapterId) || chapters[0]
@@ -351,11 +772,91 @@ export default function Home() {
       return haystack.includes(keyword)
     })
   }, [lore, loreSearch])
+  const characterLore = useMemo(() => lore.filter((item) => item.category === 'character'), [lore])
+  const factionLore = useMemo(() => lore.filter((item) => item.category === 'faction'), [lore])
   const currentStarterQuestion = starterQuestions[starterStep]
   const starterProgress = Math.round(((starterStep + 1) / starterQuestions.length) * 100)
+  const currentNovelId = activeNovelId || novelId
+  const currentNovelTitle = novels.find((item) => item.id === activeNovelId)?.title || '未命名作品'
+  const currentStarterChips = useMemo(() => getDynamicStarterChips(currentStarterQuestion, starterAnswers, activeChapter), [activeChapter, currentStarterQuestion, starterAnswers])
+  const isGuideContinuation = activeChapter.number > 1 || countWords(activeChapter.content) > 120
+  const isLocalAccount = isLocalAuthToken(authToken)
+
+  const restoreWorkspaceSnapshot = (snapshot: Partial<WorkspaceSnapshot> | null) => {
+    const restoredChapters = snapshot?.chapters?.length ? snapshot.chapters : [createBlankChapter()]
+    const restoredActiveId = restoredChapters.some((chapter) => chapter.id === snapshot?.activeChapterId)
+      ? snapshot!.activeChapterId!
+      : restoredChapters[0].id
+
+    setChapters(restoredChapters)
+    setActiveChapterId(restoredActiveId)
+    setLore(snapshot?.lore || [])
+    setIdeas(snapshot?.ideas || [])
+    setStoryProfile(snapshot?.storyProfile || createStoryProfile(currentNovelTitle, snapshot?.starterAnswers ? { ...initialStarterAnswers, ...snapshot.starterAnswers } : starterAnswers, snapshot?.sceneInput || ''))
+    setEditingLoreId(snapshot?.editingLoreId ?? null)
+    setLoreSearch(snapshot?.loreSearch || '')
+    if (snapshot?.leftTab) setLeftTab(snapshot.leftTab)
+    if (snapshot?.rightTab) setRightTab(snapshot.rightTab)
+    if (snapshot?.sceneInput !== undefined) setSceneInput(snapshot.sceneInput)
+    if (typeof snapshot?.starterStep === 'number') setStarterStep(snapshot.starterStep)
+    if (snapshot?.starterAnswers) setStarterAnswers({ ...initialStarterAnswers, ...snapshot.starterAnswers })
+    if (snapshot?.selectedWritingSkill) setSelectedWritingSkill(snapshot.selectedWritingSkill)
+    if (snapshot?.modelConfig) setModelConfig({ ...defaultModelConfig, ...snapshot.modelConfig, apiKey: '' })
+  }
+
+  const createWorkspaceSnapshot = (): WorkspaceSnapshot => ({
+    chapters,
+    activeChapterId,
+    lore,
+    ideas,
+    storyProfile,
+    editingLoreId,
+    loreSearch,
+    leftTab,
+    rightTab,
+    sceneInput,
+    starterStep,
+    starterAnswers,
+    selectedWritingSkill,
+    modelConfig: { ...modelConfig, apiKey: '' },
+  })
+
+  const persistLocalWorkspace = (novelIdToSave = activeNovelId) => {
+    if (!currentUser || !novelIdToSave || !isLocalAccount) return
+    window.localStorage.setItem(localWorkspaceStorageKey(currentUser, novelIdToSave), JSON.stringify(createWorkspaceSnapshot()))
+    window.localStorage.setItem(localActiveNovelStorageKey(currentUser), novelIdToSave)
+  }
 
   useEffect(() => {
     try {
+      const authRaw = window.localStorage.getItem(authStorageKey)
+      if (authRaw) {
+        const auth = JSON.parse(authRaw) as AuthPayload
+        setAuthToken(auth.token)
+        setCurrentUser(auth.username)
+        if (isLocalAuthToken(auth.token)) {
+          let localNovels = readLocalNovels(auth.username)
+          let recoveredActiveNovelId: string | null = null
+          if (localNovels.length === 0) {
+            const recovered = recoverLegacyLocalNovel(auth.username)
+            localNovels = recovered.novels
+            recoveredActiveNovelId = recovered.activeNovelId
+          }
+          const localActiveNovelId = window.localStorage.getItem(localActiveNovelStorageKey(auth.username))
+          const nextActiveNovelId = recoveredActiveNovelId || (localActiveNovelId && localNovels.some((item) => item.id === localActiveNovelId)
+            ? localActiveNovelId
+            : localNovels[0]?.id || null)
+          setNovels(localNovels)
+          setActiveNovelId(nextActiveNovelId)
+          if (nextActiveNovelId) {
+            restoreWorkspaceSnapshot(readLocalWorkspace(auth.username, nextActiveNovelId))
+          }
+          setSyncState('local')
+          setSyncMessage(localNovels.length ? '已读取本地作品' : '本地账号已登录，请新建作品')
+          return
+        }
+      }
+
       const raw = window.localStorage.getItem(workspaceStorageKey)
       if (raw) {
         const snapshot = JSON.parse(raw) as Partial<WorkspaceSnapshot>
@@ -368,6 +869,7 @@ export default function Home() {
         setActiveChapterId(restoredActiveId)
         if (snapshot.lore?.length) setLore(snapshot.lore)
         if (snapshot.ideas?.length) setIdeas(snapshot.ideas)
+        if (snapshot.storyProfile) setStoryProfile(snapshot.storyProfile)
         if (snapshot.editingLoreId !== undefined) setEditingLoreId(snapshot.editingLoreId)
         if (snapshot.loreSearch !== undefined) setLoreSearch(snapshot.loreSearch)
         if (snapshot.leftTab) setLeftTab(snapshot.leftTab)
@@ -376,6 +878,7 @@ export default function Home() {
         if (typeof snapshot.starterStep === 'number') setStarterStep(snapshot.starterStep)
         if (snapshot.starterAnswers) setStarterAnswers({ ...initialStarterAnswers, ...snapshot.starterAnswers })
         if (snapshot.selectedWritingSkill) setSelectedWritingSkill(snapshot.selectedWritingSkill)
+        if (snapshot.modelConfig) setModelConfig({ ...defaultModelConfig, ...snapshot.modelConfig, apiKey: '' })
       }
     } catch {
       window.localStorage.removeItem(workspaceStorageKey)
@@ -385,12 +888,66 @@ export default function Home() {
   }, [])
 
   useEffect(() => {
+    if (!authToken || isLocalAuthToken(authToken)) return
+
+    const loadNovels = async () => {
+      setSyncState('syncing')
+      setSyncMessage('正在读取后端作品')
+      try {
+        const loadedNovels = await apiRequest<BackendNovel[]>('/api/novel/list', {}, authToken)
+        const loadedModelConfig = await apiRequest<Omit<ModelConfig, 'apiKey'>>('/api/model-config', {}, authToken)
+        setModelConfig((prev) => ({ ...prev, ...loadedModelConfig, apiKey: '' }))
+        setNovels(loadedNovels)
+        const nextNovelId = activeNovelId && loadedNovels.some((item) => item.id === activeNovelId)
+          ? activeNovelId
+          : loadedNovels[0]?.id || null
+        setActiveNovelId(nextNovelId)
+        setSyncState(loadedNovels.length ? 'synced' : 'local')
+        setSyncMessage(loadedNovels.length ? '后端已连接' : '登录成功，请新建作品')
+      } catch (error) {
+        setSyncState('error')
+        setSyncMessage('后端暂不可用，继续使用本地数据')
+      }
+    }
+
+    loadNovels()
+  }, [authToken])
+
+  useEffect(() => {
+    if (!authToken || !activeNovelId || isLocalAuthToken(authToken)) return
+
+    const loadNovelWorkspace = async () => {
+      setSyncState('syncing')
+      setSyncMessage('正在同步章节和设定')
+      try {
+        const [loadedChapters, loadedLore] = await Promise.all([
+          apiRequest<BackendChapter[]>(`/api/chapter/list?novelId=${activeNovelId}`, {}, authToken),
+          apiRequest<BackendLore[]>(`/api/lore/list?novelId=${activeNovelId}`, {}, authToken),
+        ])
+        const mappedChapters = loadedChapters.length ? loadedChapters.map(mapBackendChapter) : initialChapters
+        const mappedLore = loadedLore.length ? loadedLore.map(mapBackendLore) : initialLore
+        setChapters(mappedChapters)
+        setActiveChapterId(mappedChapters[0].id)
+        setLore(mappedLore)
+        setSyncState('synced')
+        setSyncMessage('章节和设定已同步')
+      } catch (error) {
+        setSyncState('error')
+        setSyncMessage('同步失败，保留本地数据')
+      }
+    }
+
+    loadNovelWorkspace()
+  }, [activeNovelId, authToken])
+
+  useEffect(() => {
     if (!isHydrated) return
     const snapshot: WorkspaceSnapshot = {
       chapters,
       activeChapterId,
       lore,
       ideas,
+      storyProfile,
       editingLoreId,
       loreSearch,
       leftTab,
@@ -399,13 +956,368 @@ export default function Home() {
       starterStep,
       starterAnswers,
       selectedWritingSkill,
+      modelConfig: { ...modelConfig, apiKey: '' },
     }
     window.localStorage.setItem(workspaceStorageKey, JSON.stringify(snapshot))
-  }, [activeChapterId, chapters, editingLoreId, ideas, isHydrated, leftTab, lore, loreSearch, rightTab, sceneInput, selectedWritingSkill, starterAnswers, starterStep])
+    if (isLocalAccount && currentUser && activeNovelId) {
+      window.localStorage.setItem(localWorkspaceStorageKey(currentUser, activeNovelId), JSON.stringify(snapshot))
+      window.localStorage.setItem(localActiveNovelStorageKey(currentUser), activeNovelId)
+    }
+  }, [activeChapterId, activeNovelId, authToken, chapters, currentUser, editingLoreId, ideas, isHydrated, leftTab, lore, loreSearch, modelConfig, rightTab, sceneInput, selectedWritingSkill, starterAnswers, starterStep, storyProfile])
+
+  useEffect(() => {
+    if (!isHydrated || !isLocalAccount || !currentUser) return
+    window.localStorage.setItem(localNovelsStorageKey(currentUser), JSON.stringify(novels))
+  }, [authToken, currentUser, isHydrated, novels])
 
   const updateActiveChapter = (patch: Partial<Chapter>) => {
     setChapters((prev) => prev.map((chapter) => (chapter.id === activeChapter.id ? { ...chapter, ...patch } : chapter)))
     setSaveState('dirty')
+  }
+
+  const updateStoryProfile = (patch: Partial<StoryProfile>) => {
+    setStoryProfile((prev) => ({ ...prev, ...patch }))
+    setSaveState('dirty')
+  }
+
+  const startFreshWorkspace = (title: string, seedIdea = rawIdea, seedAnswers?: StarterAnswers) => {
+    const idea = seedIdea.trim() || rawIdea
+    const answers = seedAnswers || inferStarterAnswersFromIdea(idea, starterAnswers)
+    const firstChapter = createBlankChapter('第一章：开篇')
+    const profile = createStoryProfile(title, answers, idea)
+    const starterLore = createStarterLore(title, profile)
+    const freshSnapshot: WorkspaceSnapshot = {
+      chapters: [firstChapter],
+      activeChapterId: firstChapter.id,
+      lore: starterLore,
+      ideas: idea ? [idea] : [],
+      storyProfile: profile,
+      editingLoreId: null,
+      loreSearch: '',
+      leftTab: 'overview',
+      rightTab: 'starter',
+      sceneInput: answers.opening || `${title}的第一章核心画面`,
+      starterStep,
+      starterAnswers: answers,
+      selectedWritingSkill,
+      modelConfig: { ...modelConfig, apiKey: '' },
+    }
+    restoreWorkspaceSnapshot(freshSnapshot)
+    setGeneratedText('')
+    setSelectionText('')
+    setFactoryOutput('')
+    setPromptSnapshot(null)
+    setStarterOutput('')
+    setStarterAnswers(answers)
+    if (idea) setRawIdea(idea)
+    setStoryProfile(profile)
+    setLeftTab('overview')
+    setRightTab('starter')
+    setShowIdeaStart(false)
+    setSaveState('dirty')
+    return freshSnapshot
+  }
+
+  const switchLocalNovel = (novelIdToOpen: string | null) => {
+    if (!currentUser || !novelIdToOpen) {
+      setActiveNovelId(null)
+      return
+    }
+
+    persistLocalWorkspace()
+    setActiveNovelId(novelIdToOpen)
+    window.localStorage.setItem(localActiveNovelStorageKey(currentUser), novelIdToOpen)
+    restoreWorkspaceSnapshot(readLocalWorkspace(currentUser, novelIdToOpen))
+    setSyncState('local')
+    setSyncMessage('已切换本地作品')
+  }
+
+  const handleAuth = async (mode: 'login' | 'register') => {
+    if (!username.trim() || !password.trim()) {
+      setSyncState('error')
+      setSyncMessage('请输入用户名和密码')
+      return
+    }
+
+    const cleanUsername = username.trim()
+    setSyncState('syncing')
+    setSyncMessage(mode === 'login' ? '正在登录' : '正在注册')
+    try {
+      const auth = await apiRequest<AuthPayload>(`/api/auth/${mode}`, {
+        method: 'POST',
+        body: JSON.stringify({ username: cleanUsername, password }),
+      })
+      setAuthToken(auth.token)
+      setCurrentUser(auth.username)
+      window.localStorage.setItem(authStorageKey, JSON.stringify(auth))
+      setSyncState('synced')
+      setSyncMessage('账号已连接')
+    } catch (error) {
+      const accounts = readLocalAccounts()
+      if (mode === 'register') {
+        accounts[cleanUsername] = password
+        window.localStorage.setItem(localAccountsStorageKey, JSON.stringify(accounts))
+        const localAuth = createLocalAuth(cleanUsername)
+        let localNovels = readLocalNovels(cleanUsername)
+        let recoveredActiveNovelId: string | null = null
+        if (localNovels.length === 0) {
+          const recovered = recoverLegacyLocalNovel(cleanUsername)
+          localNovels = recovered.novels
+          recoveredActiveNovelId = recovered.activeNovelId
+        }
+        const localActiveNovelId = window.localStorage.getItem(localActiveNovelStorageKey(cleanUsername))
+        const nextActiveNovelId = recoveredActiveNovelId || (localActiveNovelId && localNovels.some((item) => item.id === localActiveNovelId)
+          ? localActiveNovelId
+          : localNovels[0]?.id || null)
+        setAuthToken(localAuth.token)
+        setCurrentUser(localAuth.username)
+        setNovels(localNovels)
+        setActiveNovelId(nextActiveNovelId)
+        if (nextActiveNovelId) restoreWorkspaceSnapshot(readLocalWorkspace(cleanUsername, nextActiveNovelId))
+        window.localStorage.setItem(authStorageKey, JSON.stringify(localAuth))
+        setSyncState('local')
+        setSyncMessage(localNovels.length ? '后端未连接，已读取本地作品' : '后端未连接，已创建本地账号')
+        return
+      }
+
+      if (accounts[cleanUsername] && accounts[cleanUsername] === password) {
+        const localAuth = createLocalAuth(cleanUsername)
+        let localNovels = readLocalNovels(cleanUsername)
+        let recoveredActiveNovelId: string | null = null
+        if (localNovels.length === 0) {
+          const recovered = recoverLegacyLocalNovel(cleanUsername)
+          localNovels = recovered.novels
+          recoveredActiveNovelId = recovered.activeNovelId
+        }
+        const localActiveNovelId = window.localStorage.getItem(localActiveNovelStorageKey(cleanUsername))
+        const nextActiveNovelId = recoveredActiveNovelId || (localActiveNovelId && localNovels.some((item) => item.id === localActiveNovelId)
+          ? localActiveNovelId
+          : localNovels[0]?.id || null)
+        setAuthToken(localAuth.token)
+        setCurrentUser(localAuth.username)
+        setNovels(localNovels)
+        setActiveNovelId(nextActiveNovelId)
+        if (nextActiveNovelId) restoreWorkspaceSnapshot(readLocalWorkspace(cleanUsername, nextActiveNovelId))
+        window.localStorage.setItem(authStorageKey, JSON.stringify(localAuth))
+        setSyncState('local')
+        setSyncMessage(localNovels.length ? '已读取本地作品' : '已登录本地账号，请新建作品')
+        return
+      }
+
+      setSyncState('error')
+      setSyncMessage('认证失败；后端未连接，本地账号也不存在')
+    }
+  }
+
+  const logout = () => {
+    window.localStorage.removeItem(authStorageKey)
+    setAuthToken(null)
+    setCurrentUser(null)
+    setNovels([])
+    setActiveNovelId(null)
+    setSyncState('local')
+    setSyncMessage('已切回本地原型模式')
+  }
+
+  const createNovel = async () => {
+    if (!authToken || !newNovelTitle.trim()) return
+    const title = newNovelTitle.trim()
+    const seedIdea = newNovelIdea.trim() || rawIdea.trim()
+    const seedAnswers = inferStarterAnswersFromIdea(seedIdea, starterAnswers)
+    if (isLocalAccount) {
+      persistLocalWorkspace()
+      const localNovel: BackendNovel = {
+        id: `local-novel-${Date.now()}`,
+        title,
+        globalOutline: createStarterSummary(seedAnswers),
+        authorStylePrompt: stylePrompt,
+      }
+      const nextNovels = [...novels, localNovel]
+      setNovels(nextNovels)
+      setActiveNovelId(localNovel.id)
+      const freshSnapshot = startFreshWorkspace(localNovel.title, seedIdea, seedAnswers)
+      if (currentUser) {
+        window.localStorage.setItem(localNovelsStorageKey(currentUser), JSON.stringify(nextNovels))
+        window.localStorage.setItem(localActiveNovelStorageKey(currentUser), localNovel.id)
+        window.localStorage.setItem(localWorkspaceStorageKey(currentUser, localNovel.id), JSON.stringify(freshSnapshot))
+      }
+      setSyncState('local')
+      setSyncMessage('本地作品已创建')
+      setNewNovelIdea('')
+      return
+    }
+
+    setSyncState('syncing')
+    setSyncMessage('正在新建作品')
+    try {
+      const created = await apiRequest<BackendNovel>('/api/novel', {
+        method: 'POST',
+        body: JSON.stringify({
+          title,
+          globalOutline: createStarterSummary(seedAnswers),
+          authorStylePrompt: stylePrompt,
+        }),
+      }, authToken)
+      setNovels((prev) => [created, ...prev.filter((item) => item.id !== created.id)])
+      setActiveNovelId(created.id)
+      startFreshWorkspace(created.title, seedIdea, seedAnswers)
+      setSyncState('synced')
+      setSyncMessage('作品已创建')
+      setNewNovelIdea('')
+    } catch (error) {
+      setSyncState('error')
+      setSyncMessage('新建失败，请检查后端和数据库')
+    }
+  }
+
+  const organizeIdea = () => {
+    const nextAnswers = inferStarterAnswersFromIdea(rawIdea, starterAnswers)
+    setStarterAnswers(nextAnswers)
+    setStoryProfile(createStoryProfile(currentNovelTitle, nextAnswers, rawIdea))
+    setIdeaBlueprint(createIdeaBlueprint(rawIdea, nextAnswers))
+    setStarterOutput(createIdeaBlueprint(rawIdea, nextAnswers))
+    setSceneInput(nextAnswers.opening)
+    setRightTab('starter')
+    setShowIdeaStart(false)
+  }
+
+  const generateChapterFromIdea = () => {
+    const nextAnswers = inferStarterAnswersFromIdea(rawIdea, starterAnswers)
+    setStarterAnswers(nextAnswers)
+    setStarterOutput(`${createStarterOpening(nextAnswers)}\n\n---\n故事骨架：\n${createIdeaBlueprint(rawIdea, nextAnswers)}`)
+    setRightTab('starter')
+    setShowIdeaStart(false)
+  }
+
+  const createCodexTask = (taskType: 'blueprint' | 'chapter' | 'rescue' = 'blueprint') => {
+    const taskLabels = {
+      blueprint: '把脑洞整理成网文故事骨架',
+      chapter: '根据脑洞生成第一章草稿',
+      rescue: '帮当前章节卡文急救',
+    }
+    const task = `请你作为网文创作教练，完成任务：${taskLabels[taskType]}。
+
+用户脑洞：
+${rawIdea || '暂无'}
+
+当前题材/情绪：
+- 题材：${starterAnswers.genre}
+- 情绪：${starterAnswers.tone}
+- 核心钩子：${starterAnswers.hook}
+
+主角与世界：
+- 主角：${starterAnswers.protagonist}
+- 世界规则：${starterAnswers.world}
+- 第一幕：${starterAnswers.opening}
+
+当前章节：
+- 标题：${activeChapter.title}
+- 摘要：${activeChapter.summary}
+- 正文片段：
+${activeChapter.content.slice(0, 1200)}
+
+请输出：
+1. 一句话卖点
+2. 主角欲望、恐惧、秘密
+3. 第一章冲突设计
+4. 前 5 章推进
+5. 可直接插入的正文草稿或下一段
+
+要求：偏网文节奏，冲突明确，有画面感，避免设定说明书和 AI 腔。`
+    setCodexTask(task)
+    return task
+  }
+
+  const copyCodexTask = async (taskType: 'blueprint' | 'chapter' | 'rescue' = 'blueprint') => {
+    const task = createCodexTask(taskType)
+    try {
+      await navigator.clipboard.writeText(task)
+      setSyncMessage('Codex 任务包已复制')
+    } catch {
+      setSyncMessage('任务包已生成，可手动复制')
+    }
+  }
+
+  const applyCodexResult = () => {
+    if (!codexResult.trim()) return
+    updateActiveChapter({ content: `${activeChapter.content.trim()}\n\n${codexResult.trim()}`.trim() })
+    setCodexResult('')
+    setShowIdeaStart(false)
+  }
+
+  const applyQuickAction = (action: 'continue' | 'visual' | 'conflict' | 'twist' | 'webnovel' | 'diagnose') => {
+    const instructions = {
+      continue: `围绕「${activeChapter.title}」续写下一段，保持本章目标清晰，不要突然跳场。`,
+      visual: `把当前段落写得更有画面感，增加动作、环境、触觉和细节，不要空泛抒情。`,
+      conflict: `给当前场景加入一个明确冲突：目标对立、时间压力或身份暴露，并让局面变糟。`,
+      twist: `为当前场景加入一个小反转，结尾留下下一章钩子。`,
+      webnovel: `把这段改成更顺滑的网文风：短句推进、冲突明确、情绪递进，避免说明书式设定。`,
+      diagnose: `请检查当前章节哪里无聊、哪里像流水账，并给出三条可直接修改的建议。`,
+    }
+    setSceneInput(instructions[action])
+    setRightTab('copilot')
+  }
+
+  const updateModelConfig = (patch: Partial<ModelConfig>) => {
+    setModelConfig((prev) => ({ ...prev, ...patch }))
+  }
+
+  const saveModelConfig = async () => {
+    if (isLocalAccount) {
+      setModelConfig((prev) => ({ ...prev, apiKeyConfigured: Boolean(prev.apiKey.trim()) || prev.apiKeyConfigured, apiKey: '' }))
+      setSyncState('local')
+      setSyncMessage('模型配置已保存到本地账号')
+      return
+    }
+
+    if (!authToken) {
+      setSyncState('error')
+      setSyncMessage('请先开启云同步，再保存模型配置')
+      setShowSyncPanel(true)
+      return
+    }
+
+    setSyncState('syncing')
+    setSyncMessage('正在保存模型配置')
+    try {
+      const saved = await apiRequest<Omit<ModelConfig, 'apiKey'>>('/api/model-config', {
+        method: 'PUT',
+        body: JSON.stringify(modelConfig),
+      }, authToken)
+      setModelConfig((prev) => ({ ...prev, ...saved, apiKey: '' }))
+      setSyncState('synced')
+      setSyncMessage('模型配置已保存')
+    } catch (error) {
+      setSyncState('error')
+      setSyncMessage('模型配置保存失败')
+    }
+  }
+
+  const testModelConfig = async () => {
+    if (!modelConfig.apiKey.trim() && !modelConfig.apiKeyConfigured) {
+      setSyncState('error')
+      setModelTestResult('请先输入 API Key，再测试连接')
+      setSyncMessage('缺少模型 API Key')
+      return
+    }
+
+    setModelTestResult('测试中...')
+    setSyncState('syncing')
+    setSyncMessage('正在测试模型连接')
+    try {
+      const result = await apiRequest<string>('/api/model-config/test', {
+        method: 'POST',
+        body: JSON.stringify(modelConfig),
+      }, authToken)
+      const isFailed = result?.startsWith('测试失败')
+      setModelTestResult(result || '模型连接成功')
+      setSyncState(isFailed ? 'error' : 'synced')
+      setSyncMessage(isFailed ? '模型测试失败' : '模型连接成功')
+    } catch (error) {
+      setModelTestResult('测试失败：请确认后端已启动，并检查 Base URL、模型名和 API Key')
+      setSyncState('error')
+      setSyncMessage('模型测试失败')
+    }
   }
 
   const handleGenerate = async () => {
@@ -422,9 +1334,9 @@ export default function Home() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${localStorage.getItem('token') || ''}`,
+          Authorization: `Bearer ${authToken || ''}`,
         },
-        body: JSON.stringify({ novelId, targetChapterNumber: activeChapter.number + 1, sceneDescription: sceneInput }),
+        body: JSON.stringify({ novelId: currentNovelId, targetChapterNumber: activeChapter.number + 1, sceneDescription: sceneInput }),
         signal: controller.signal,
       })
 
@@ -452,7 +1364,60 @@ export default function Home() {
     setGeneratedText('')
   }
 
-  const handleSave = () => setSaveState('saved')
+  const handleSave = async () => {
+    if (!authToken || !activeNovelId) {
+      setSaveState('saved')
+      setSyncState('local')
+      setSyncMessage('已保存到浏览器本地')
+      return
+    }
+
+    setSyncState('syncing')
+    setSyncMessage('正在保存当前章节')
+    try {
+      if (isUuid(activeChapter.id)) {
+        await apiRequest<void>(`/api/chapter/${activeChapter.id}`, {
+          method: 'PUT',
+          body: JSON.stringify(toChapterPayload(activeChapter, activeNovelId)),
+        }, authToken)
+      } else {
+        const created = await apiRequest<BackendChapter>('/api/chapter', {
+          method: 'POST',
+          body: JSON.stringify(toChapterPayload(activeChapter, activeNovelId)),
+        }, authToken)
+        const mapped = mapBackendChapter(created)
+        setChapters((prev) => prev.map((chapter) => (chapter.id === activeChapter.id ? mapped : chapter)))
+        setActiveChapterId(mapped.id)
+      }
+      setSaveState('saved')
+      setSyncState('synced')
+      setSyncMessage('当前章节已保存到后端')
+    } catch (error) {
+      setSyncState('error')
+      setSyncMessage('保存失败，已保留本地草稿')
+    }
+  }
+
+  const publishActiveChapter = async () => {
+    if (!authToken || !activeNovelId || !isUuid(activeChapter.id)) {
+      updateActiveChapter({ status: 'published' })
+      setSyncMessage('本地章节已标记发布')
+      return
+    }
+
+    setSyncState('syncing')
+    setSyncMessage('正在发布章节')
+    try {
+      await apiRequest<void>(`/api/chapter/${activeChapter.id}/publish`, { method: 'POST' }, authToken)
+      updateActiveChapter({ status: 'published' })
+      setSaveState('saved')
+      setSyncState('synced')
+      setSyncMessage('章节已发布，后端会生成摘要事件')
+    } catch (error) {
+      setSyncState('error')
+      setSyncMessage('发布失败，已保留当前草稿')
+    }
+  }
 
   const resetWorkspace = () => {
     window.localStorage.removeItem(workspaceStorageKey)
@@ -460,9 +1425,10 @@ export default function Home() {
     setActiveChapterId(initialChapters[0].id)
     setLore(initialLore)
     setIdeas(initialIdeas)
+    setStoryProfile(initialStoryProfile)
     setEditingLoreId(null)
     setLoreSearch('')
-    setLeftTab('chapters')
+    setLeftTab('overview')
     setRightTab('starter')
     setSceneInput('林青云在雨夜客栈被黑衣人逼问玉佩来历，玉佩突然与玄天剑残片共鸣')
     setGeneratedText('')
@@ -476,7 +1442,7 @@ export default function Home() {
     setSaveState('saved')
   }
 
-  const addChapter = () => {
+  const addChapter = async () => {
     const nextNumber = Math.max(...chapters.map((chapter) => chapter.number)) + 1
     const newChapter: Chapter = {
       id: `chapter-${Date.now()}`,
@@ -489,12 +1455,44 @@ export default function Home() {
       satisfaction: 50,
       mystery: 50,
     }
+
+    if (authToken && activeNovelId) {
+      setSyncState('syncing')
+      setSyncMessage('正在新建章节')
+      try {
+        const created = await apiRequest<BackendChapter>('/api/chapter', {
+          method: 'POST',
+          body: JSON.stringify(toChapterPayload(newChapter, activeNovelId)),
+        }, authToken)
+        const mapped = mapBackendChapter(created)
+        setChapters((prev) => [...prev, mapped])
+        setActiveChapterId(mapped.id)
+        setSaveState('saved')
+        setSyncState('synced')
+        setSyncMessage('章节已创建')
+        return
+      } catch (error) {
+        setSyncState('error')
+        setSyncMessage('后端新建失败，已创建本地章节')
+      }
+    }
+
     setChapters((prev) => [...prev, newChapter])
     setActiveChapterId(newChapter.id)
   }
 
-  const removeChapter = (chapterId: string) => {
+  const removeChapter = async (chapterId: string) => {
     if (chapters.length <= 1) return
+    if (authToken && activeNovelId && isUuid(chapterId)) {
+      try {
+        await apiRequest<void>(`/api/chapter/${chapterId}`, { method: 'DELETE' }, authToken)
+        setSyncMessage('章节已从后端删除')
+      } catch (error) {
+        setSyncState('error')
+        setSyncMessage('后端删除失败，仅更新本地列表')
+      }
+    }
+
     const nextChapters = chapters
       .filter((chapter) => chapter.id !== chapterId)
       .map((chapter, index) => ({ ...chapter, number: index + 1 }))
@@ -506,13 +1504,33 @@ export default function Home() {
     setSaveState('dirty')
   }
 
-  const addLore = () => {
+  const addLore = async () => {
     const next: LoreItem = {
       id: `lore-${Date.now()}`,
       category: 'character',
       name: '新角色',
       tags: ['待完善'],
       content: '补充角色身份、欲望、恐惧、与主线的关系。',
+    }
+    if (authToken && activeNovelId) {
+      setSyncState('syncing')
+      setSyncMessage('正在新建设定')
+      try {
+        const created = await apiRequest<BackendLore>('/api/lore', {
+          method: 'POST',
+          body: JSON.stringify(toLorePayload(next, activeNovelId)),
+        }, authToken)
+        const mapped = mapBackendLore(created)
+        setLore((prev) => [mapped, ...prev])
+        setEditingLoreId(mapped.id)
+        setLeftTab('lore')
+        setSyncState('synced')
+        setSyncMessage('设定已创建')
+        return
+      } catch (error) {
+        setSyncState('error')
+        setSyncMessage('后端新建失败，已创建本地设定')
+      }
     }
     setLore((prev) => [next, ...prev])
     setEditingLoreId(next.id)
@@ -527,7 +1545,33 @@ export default function Home() {
     updateLore(loreId, { tags: value.split(/[,，]/).map((tag) => tag.trim()).filter(Boolean) })
   }
 
-  const removeLore = (loreId: string) => {
+  const saveLore = async (item: LoreItem) => {
+    if (!authToken || !activeNovelId || !isUuid(item.id)) return
+    setSyncState('syncing')
+    setSyncMessage('正在保存设定')
+    try {
+      await apiRequest<void>(`/api/lore/${item.id}`, {
+        method: 'PUT',
+        body: JSON.stringify(toLorePayload(item, activeNovelId)),
+      }, authToken)
+      setSyncState('synced')
+      setSyncMessage('设定已保存')
+    } catch (error) {
+      setSyncState('error')
+      setSyncMessage('设定保存失败，已保留本地编辑')
+    }
+  }
+
+  const removeLore = async (loreId: string) => {
+    if (authToken && activeNovelId && isUuid(loreId)) {
+      try {
+        await apiRequest<void>(`/api/lore/${loreId}`, { method: 'DELETE' }, authToken)
+        setSyncMessage('设定已从后端删除')
+      } catch (error) {
+        setSyncState('error')
+        setSyncMessage('后端删除失败，仅更新本地列表')
+      }
+    }
     setLore((prev) => prev.filter((item) => item.id !== loreId))
     if (editingLoreId === loreId) {
       setEditingLoreId(null)
@@ -587,12 +1631,35 @@ export default function Home() {
   }
 
   const generateStarter = () => {
+    if (isGuideContinuation) {
+      setStarterOutput(createGuideOutput(starterAnswers, activeChapter, matchedLore))
+      return
+    }
+
     const opening = createStarterOpening(starterAnswers)
     const plan = createStarterPlan(starterAnswers)
     setStarterOutput(`${opening}\n\n---\n后三章推进：\n${plan.map((item, index) => `${index + 1}. ${item}`).join('\n')}`)
   }
 
   const applyStarter = () => {
+    if (isGuideContinuation) {
+      const fallback = createGuideOutput(starterAnswers, activeChapter, matchedLore)
+      const output = (starterOutput || fallback).trim()
+      const continuation = output.split('---\n可直接续写段落：')[1]?.trim() || output
+
+      updateActiveChapter({
+        content: `${activeChapter.content.trim()}\n\n${continuation}`.trim(),
+        summary: `${activeChapter.summary} 创作向导补充：${starterAnswers.hook}`,
+        tension: Math.min(100, activeChapter.tension + 8),
+        mystery: Math.min(100, activeChapter.mystery + 6),
+      })
+      setIdeas((prev) => [starterAnswers.opening, starterAnswers.hook, ...prev])
+      setSceneInput(starterAnswers.opening)
+      setLeftTab('chapters')
+      setSaveState('dirty')
+      return
+    }
+
     const opening = starterOutput.split('\n\n---\n')[0] || createStarterOpening(starterAnswers)
     const summary = createStarterSummary(starterAnswers)
     const plan = createStarterPlan(starterAnswers)
@@ -627,6 +1694,7 @@ export default function Home() {
       },
       ...prev,
     ])
+    setStoryProfile(createStoryProfile(currentNovelTitle, starterAnswers, starterAnswers.hook))
     setIdeas((prev) => [starterAnswers.hook, starterAnswers.opening, ...plan, ...prev])
     setSceneInput(starterAnswers.opening)
     setLeftTab('chapters')
@@ -634,13 +1702,195 @@ export default function Home() {
   }
 
   return (
-    <div className="h-screen w-full overflow-hidden bg-background text-foreground">
-      <div className="flex h-full min-w-0">
-        <aside className={cn('h-full border-r border-border bg-card transition-all duration-200', leftOpen ? 'w-[280px]' : 'w-14')}>
+    <div className="flex h-screen w-full flex-col overflow-hidden bg-background text-foreground">
+      <div className="flex min-h-[56px] items-center gap-3 border-b border-border/80 bg-card/95 px-5 shadow-sm backdrop-blur">
+        <div className="flex items-center gap-2 pr-2">
+          <BookOpen className="h-4 w-4 text-primary" />
+          <div className="leading-tight">
+            <div className="text-sm font-semibold">NovelAI Copilot</div>
+            <div className="text-[11px] text-muted-foreground">脑洞到章节的网文创作教练</div>
+          </div>
+        </div>
+        <div className="flex min-w-0 flex-1 items-center justify-end gap-2">
+          {!showIdeaStart && (
+            <button onClick={() => setShowIdeaStart(true)} className="rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground">
+              新脑洞
+            </button>
+          )}
+          <button onClick={() => setShowModelPanel((value) => !value)} className="flex items-center gap-1 rounded-md px-3 py-1.5 text-sm text-muted-foreground hover:bg-accent hover:text-foreground">
+            <Settings2 className="h-4 w-4" /> 模型
+          </button>
+          <button onClick={() => setShowSyncPanel((value) => !value)} className="rounded-md px-3 py-1.5 text-sm text-muted-foreground hover:bg-accent hover:text-foreground">
+            {isLocalAccount ? '本地账号' : authToken ? '已同步' : '同步'}
+          </button>
+          {authToken && (
+            <>
+              <span className="shrink-0 text-xs text-muted-foreground">{isLocalAccount ? '本地账号' : '账号'}：{currentUser}</span>
+              <select
+                value={activeNovelId || ''}
+                onChange={(event) => {
+                  const nextId = event.target.value || null
+                  if (isLocalAccount) {
+                    switchLocalNovel(nextId)
+                    return
+                  }
+                  setActiveNovelId(nextId)
+                }}
+                className="min-w-[180px] rounded-md border border-input bg-background px-2 py-1.5 text-sm outline-none"
+              >
+                {novels.length === 0 && <option value="">暂无作品</option>}
+                {novels.map((item) => <option key={item.id} value={item.id}>{item.title}</option>)}
+              </select>
+              <input
+                value={newNovelTitle}
+                onChange={(event) => setNewNovelTitle(event.target.value)}
+                className="w-[150px] rounded-md border border-input bg-background px-2 py-1.5 text-sm outline-none"
+                placeholder="新作品标题"
+              />
+              <input
+                value={newNovelIdea}
+                onChange={(event) => setNewNovelIdea(event.target.value)}
+                className="w-[240px] rounded-md border border-input bg-background px-2 py-1.5 text-sm outline-none"
+                placeholder="一句脑洞，可留空沿用首页灵感"
+              />
+              <button onClick={createNovel} className="rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground">新建作品</button>
+              <button onClick={logout} className="rounded-md border border-border px-3 py-1.5 text-sm text-muted-foreground hover:text-foreground">退出</button>
+            </>
+          )}
+        </div>
+        <div className={cn('rounded-md px-2 py-1 text-xs', syncState === 'error' ? 'bg-destructive/10 text-destructive' : syncState === 'synced' ? 'bg-primary/10 text-primary' : 'bg-secondary text-secondary-foreground')}>
+          {syncState === 'syncing' ? '同步中...' : syncMessage}
+        </div>
+      </div>
+      {(showSyncPanel || showModelPanel) && (
+        <div className="grid gap-3 border-b border-border bg-background/80 px-4 py-3 backdrop-blur lg:grid-cols-2">
+          {showSyncPanel && (
+            <div className="rounded-md border border-border bg-card p-3">
+              <div className="mb-2 text-sm font-medium">账号与同步</div>
+              <div className="flex flex-wrap gap-2">
+                <input value={username} onChange={(event) => setUsername(event.target.value)} className="w-[150px] rounded-md border border-input bg-background px-2 py-1.5 text-sm outline-none" placeholder="用户名" />
+                <input value={password} onChange={(event) => setPassword(event.target.value)} type="password" className="w-[150px] rounded-md border border-input bg-background px-2 py-1.5 text-sm outline-none" placeholder="密码" />
+                <button onClick={() => handleAuth('login')} className="rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground">登录</button>
+                <button onClick={() => handleAuth('register')} className="rounded-md border border-border px-3 py-1.5 text-sm text-muted-foreground hover:text-foreground">注册</button>
+              </div>
+              <p className="mt-2 text-xs leading-5 text-muted-foreground">后端未连接时会自动使用浏览器本地账号，方便先体验创作流程；后端启动后会优先连接真实账号。</p>
+            </div>
+          )}
+          {showModelPanel && (
+            <div className="rounded-md border border-border bg-card p-3">
+              <div className="mb-2 flex items-center gap-2 text-sm font-medium"><KeyRound className="h-4 w-4 text-primary" />模型/API 设置</div>
+              <div className="grid gap-2 sm:grid-cols-4">
+                <select value={modelConfig.provider} onChange={(event) => updateModelConfig({ provider: event.target.value as ModelConfig['provider'] })} className="rounded-md border border-input bg-background px-2 py-1.5 text-sm outline-none">
+                  <option value="deepseek">DeepSeek</option>
+                  <option value="openai">OpenAI</option>
+                  <option value="siliconflow">硅基流动</option>
+                  <option value="openrouter">OpenRouter</option>
+                  <option value="custom">自定义</option>
+                </select>
+                <input value={modelConfig.baseUrl} onChange={(event) => updateModelConfig({ baseUrl: event.target.value })} className="rounded-md border border-input bg-background px-2 py-1.5 text-sm outline-none sm:col-span-2" placeholder="Base URL" />
+                <input value={modelConfig.model} onChange={(event) => updateModelConfig({ model: event.target.value })} className="rounded-md border border-input bg-background px-2 py-1.5 text-sm outline-none" placeholder="模型名" />
+                <input value={modelConfig.apiKey} onChange={(event) => updateModelConfig({ apiKey: event.target.value })} type="password" className="rounded-md border border-input bg-background px-2 py-1.5 text-sm outline-none sm:col-span-4" placeholder="API Key，本地临时使用，后续应加密保存到后端" />
+              </div>
+              <div className="mt-2 flex items-center justify-between gap-2">
+                <span className="text-xs text-muted-foreground">
+                  {modelTestResult || (isLocalAccount ? '本地账号仅保存模型参数，不保存明文 Key。' : modelConfig.apiKeyConfigured ? '已保存 Key。留空不会覆盖原 Key。' : '未保存 Key。保存后后端会加密存储。')}
+                </span>
+                <div className="flex gap-2">
+                  <button onClick={testModelConfig} className="rounded-md border border-border px-3 py-1.5 text-sm text-muted-foreground hover:text-foreground">测试连接</button>
+                  <button onClick={saveModelConfig} className="rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground">保存模型配置</button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+      {showIdeaStart ? (
+        <main className="soft-grid min-h-0 flex-1 overflow-y-auto px-6 py-10">
+          <section className="mx-auto w-full max-w-5xl">
+            <div className="ink-pattern mb-6 overflow-hidden rounded-md border border-border px-6 py-6 shadow-sm">
+              <div className="mb-3 inline-flex items-center gap-2 rounded-md bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary">
+                <Sparkles className="h-3.5 w-3.5" />
+                给有脑洞但不知道怎么写的人
+              </div>
+              <h1 className="max-w-3xl text-3xl font-semibold leading-tight text-foreground">有脑洞，不会写？先把脑子里的画面说出来。</h1>
+              <p className="mt-3 max-w-2xl text-sm leading-6 text-muted-foreground">
+                从一句灵感开始，拆出故事骨架、黄金第一章、后续推进，再进入工作台续写、润色、救卡文。
+              </p>
+            </div>
+
+            <div className="paper-panel rounded-md border border-border bg-card p-4 shadow-sm">
+              <textarea
+                value={rawIdea}
+                onChange={(event) => setRawIdea(event.target.value)}
+                className="min-h-[160px] w-full resize-none border-0 bg-transparent text-[17px] leading-8 outline-none"
+                placeholder="例：被退婚少年体内封着上古剑魂，第一章想打脸未婚妻家族。"
+              />
+              <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-border pt-4">
+                <button onClick={organizeIdea} className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground">整理成故事</button>
+                <button onClick={generateChapterFromIdea} className="rounded-md border border-border px-4 py-2 text-sm hover:border-primary hover:text-primary">生成第一章草稿</button>
+                <button onClick={() => { setRightTab('starter'); setShowIdeaStart(false) }} className="rounded-md px-4 py-2 text-sm text-muted-foreground hover:bg-accent hover:text-foreground">进入问答向导</button>
+                <button onClick={() => setShowIdeaStart(false)} className="ml-auto rounded-md px-4 py-2 text-sm text-muted-foreground hover:bg-accent hover:text-foreground">继续上次创作</button>
+              </div>
+            </div>
+
+            <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              <FeatureCard icon={Brain} title="脑洞拆解" text="把一句模糊灵感整理成卖点、主角欲望、初始冲突和世界规则。" />
+              <FeatureCard icon={PenLine} title="黄金第一章" text="围绕前 300 字冲突、爽点释放和结尾钩子，生成可继续写的开篇。" />
+              <FeatureCard icon={Sparkles} title="短画面扩写" text="输入几句画面，结合章节记忆和设定库扩写成正文段落。" />
+              <FeatureCard icon={Wand2} title="卡文急救" text="一键续写、加冲突、加反转、补画面感，把空想接成下一段。" />
+              <FeatureCard icon={Layers3} title="长篇记忆" text="用章节摘要、Lore 和近期上下文，降低长篇创作遗忘前文的问题。" />
+              <FeatureCard icon={AlertTriangle} title="伏笔 / OOC 检查" text="提醒伏笔是否遗忘、角色行为是否偏离设定，减少写崩风险。" />
+            </div>
+
+            <div className="mt-5 flex flex-wrap gap-2 text-xs text-muted-foreground">
+              {['退婚流开局', '打脸爽点', '悬念埋设', '对白冲突', '去 AI 味润色', '短剧改编'].map((item) => (
+                <span key={item} className="rounded-md border border-border px-2.5 py-1">{item}</span>
+              ))}
+            </div>
+
+            <div className="rounded-md border border-border bg-card/95 p-4 shadow-sm">
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <div>
+                  <h2 className="text-sm font-semibold">暂时没有模型 API？用 Codex 协作</h2>
+                  <p className="mt-1 text-xs leading-5 text-muted-foreground">先让页面生成任务包，发给 Codex 后把结果粘回来。以后接模型 API 时，这里会换成自动调用。</p>
+                </div>
+                <div className="flex gap-2">
+                  <button onClick={() => copyCodexTask('blueprint')} className="rounded-md border border-border px-3 py-1.5 text-xs hover:border-primary hover:text-primary">复制故事任务</button>
+                  <button onClick={() => copyCodexTask('chapter')} className="rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground">复制第一章任务</button>
+                </div>
+              </div>
+              {codexTask && (
+                <textarea
+                  value={codexTask}
+                  onChange={(event) => setCodexTask(event.target.value)}
+                  className="mb-3 min-h-[120px] w-full resize-none rounded-md border border-input bg-background px-3 py-2 text-xs leading-5 outline-none"
+                />
+              )}
+              <textarea
+                value={codexResult}
+                onChange={(event) => setCodexResult(event.target.value)}
+                className="min-h-[96px] w-full resize-none rounded-md border border-input bg-background px-3 py-2 text-sm leading-6 outline-none"
+                placeholder="把 Codex 返回的故事骨架、第一章或下一段粘到这里..."
+              />
+              <div className="mt-3 flex justify-end">
+                <button onClick={applyCodexResult} disabled={!codexResult.trim()} className="rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground disabled:opacity-40">写入当前章节</button>
+              </div>
+            </div>
+
+            {ideaBlueprint && (
+              <div className="mt-4 rounded-md border border-border bg-card p-4 text-sm leading-7 whitespace-pre-wrap">
+                {ideaBlueprint}
+              </div>
+            )}
+          </section>
+        </main>
+      ) : (
+      <div className="soft-grid flex min-h-0 flex-1 min-w-0">
+        <aside className={cn('h-full border-r border-border bg-card/95 shadow-sm backdrop-blur transition-all duration-200', leftOpen ? 'w-[280px]' : 'w-14')}>
           <div className="flex h-14 items-center justify-between border-b border-border px-3">
             {leftOpen && (
               <div className="min-w-0">
-                <div className="flex items-center gap-2 font-semibold"><BookOpen className="h-4 w-4 text-primary" /> 仙途漫漫</div>
+                <div className="flex items-center gap-2 font-semibold"><BookOpen className="h-4 w-4 text-primary" /> {currentNovelTitle}</div>
                 <div className="text-xs text-muted-foreground">长篇连载创作工作台</div>
               </div>
             )}
@@ -653,6 +1903,7 @@ export default function Home() {
             <>
               <div className="grid grid-cols-4 border-b border-border text-sm">
                 {[
+                  ['overview', BookOpen, '总览'],
                   ['chapters', ListTree, '章节'],
                   ['lore', Brain, '设定'],
                   ['ideas', Flame, '灵感'],
@@ -667,6 +1918,105 @@ export default function Home() {
               </div>
 
               <div className="h-[calc(100%-7rem)] overflow-y-auto p-3">
+                {leftTab === 'overview' && (
+                  <div className="space-y-3">
+                    <div className="rounded-md border border-border bg-background/90 p-3">
+                      <div className="mb-2 flex items-center gap-2 text-sm font-medium">
+                        <BookOpen className="h-4 w-4 text-primary" />
+                        作品资料
+                      </div>
+                      <label className="text-[11px] text-muted-foreground">一句话卖点</label>
+                      <textarea
+                        value={storyProfile.logline}
+                        onChange={(event) => updateStoryProfile({ logline: event.target.value })}
+                        className="mt-1 min-h-[64px] w-full resize-none rounded-md border border-input bg-card px-2 py-1.5 text-xs leading-5 outline-none"
+                      />
+                      <label className="mt-3 block text-[11px] text-muted-foreground">全局大纲</label>
+                      <textarea
+                        value={storyProfile.outline}
+                        onChange={(event) => updateStoryProfile({ outline: event.target.value })}
+                        className="mt-1 min-h-[110px] w-full resize-none rounded-md border border-input bg-card px-2 py-1.5 text-xs leading-5 outline-none"
+                      />
+                    </div>
+
+                    <div className="rounded-md border border-border bg-background/90 p-3">
+                      <div className="mb-2 flex items-center gap-2 text-sm font-medium">
+                        <Bot className="h-4 w-4 text-primary" />
+                        主角与世界
+                      </div>
+                      <label className="text-[11px] text-muted-foreground">主角</label>
+                      <textarea
+                        value={storyProfile.protagonist}
+                        onChange={(event) => updateStoryProfile({ protagonist: event.target.value })}
+                        className="mt-1 min-h-[72px] w-full resize-none rounded-md border border-input bg-card px-2 py-1.5 text-xs leading-5 outline-none"
+                      />
+                      <label className="mt-3 block text-[11px] text-muted-foreground">世界规则</label>
+                      <textarea
+                        value={storyProfile.worldRules}
+                        onChange={(event) => updateStoryProfile({ worldRules: event.target.value })}
+                        className="mt-1 min-h-[72px] w-full resize-none rounded-md border border-input bg-card px-2 py-1.5 text-xs leading-5 outline-none"
+                      />
+                    </div>
+
+                    <div className="rounded-md border border-border bg-background/90 p-3">
+                      <div className="mb-2 flex items-center gap-2 text-sm font-medium">
+                        <ListTree className="h-4 w-4 text-primary" />
+                        剧情线
+                      </div>
+                      <label className="text-[11px] text-muted-foreground">长期剧情弧</label>
+                      <textarea
+                        value={storyProfile.storyArc}
+                        onChange={(event) => updateStoryProfile({ storyArc: event.target.value })}
+                        className="mt-1 min-h-[70px] w-full resize-none rounded-md border border-input bg-card px-2 py-1.5 text-xs leading-5 outline-none"
+                      />
+                      <label className="mt-3 block text-[11px] text-muted-foreground">当前追读线</label>
+                      <textarea
+                        value={storyProfile.currentThread}
+                        onChange={(event) => updateStoryProfile({ currentThread: event.target.value })}
+                        className="mt-1 min-h-[64px] w-full resize-none rounded-md border border-input bg-card px-2 py-1.5 text-xs leading-5 outline-none"
+                      />
+                    </div>
+
+                    <div className="rounded-md border border-border bg-background/90 p-3">
+                      <div className="mb-2 flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2 text-sm font-medium">
+                          <Brain className="h-4 w-4 text-primary" />
+                          人物角色
+                        </div>
+                        <button onClick={() => { setLeftTab('lore'); addLore() }} className="rounded-md border border-border px-2 py-1 text-[11px] text-muted-foreground hover:border-primary hover:text-primary">添加</button>
+                      </div>
+                      <div className="space-y-2">
+                        {characterLore.length ? characterLore.map((item) => (
+                          <button key={item.id} onClick={() => { setLeftTab('lore'); setEditingLoreId(item.id) }} className="w-full rounded-md border border-border bg-card p-2 text-left hover:border-primary/40">
+                            <div className="truncate text-xs font-medium">{item.name}</div>
+                            <div className="mt-1 line-clamp-2 text-[11px] leading-4 text-muted-foreground">{item.content}</div>
+                          </button>
+                        )) : (
+                          <div className="rounded-md border border-dashed border-border p-3 text-xs leading-5 text-muted-foreground">还没有人物卡。可以先添加主角、重要配角和反派。</div>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="rounded-md border border-border bg-background/90 p-3">
+                      <div className="mb-2 flex items-center gap-2 text-sm font-medium">
+                        <Layers3 className="h-4 w-4 text-primary" />
+                        章节概览
+                      </div>
+                      <div className="space-y-2">
+                        {chapters.map((chapter) => (
+                          <button key={chapter.id} onClick={() => { setLeftTab('chapters'); setActiveChapterId(chapter.id) }} className="w-full rounded-md border border-border bg-card p-2 text-left hover:border-primary/40">
+                            <div className="flex items-center justify-between gap-2 text-xs font-medium">
+                              <span className="truncate">{chapter.title}</span>
+                              <span className="shrink-0 text-[11px] text-muted-foreground">{countWords(chapter.content)} 字</span>
+                            </div>
+                            <div className="mt-1 line-clamp-2 text-[11px] leading-4 text-muted-foreground">{chapter.summary}</div>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 {leftTab === 'chapters' && (
                   <div className="space-y-2">
                     {chapters.map((chapter) => (
@@ -755,6 +2105,12 @@ export default function Home() {
                                 className="min-h-[60px] w-full resize-none rounded-md border border-input bg-card px-2 py-1.5 text-xs leading-5 outline-none"
                                 placeholder="角色立绘 Prompt，可选"
                               />
+                              <button
+                                onClick={() => saveLore(item)}
+                                className="w-full rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground"
+                              >
+                                保存设定
+                              </button>
                             </div>
                           ) : (
                             <>
@@ -796,8 +2152,8 @@ export default function Home() {
           )}
         </aside>
 
-        <main className="flex min-w-0 flex-1 flex-col bg-background">
-          <header className="flex h-14 items-center justify-between border-b border-border bg-card px-4">
+        <main className="flex min-w-0 flex-1 flex-col bg-transparent">
+          <header className="flex h-14 items-center justify-between border-b border-border bg-card/90 px-4 backdrop-blur">
             <div className="min-w-0 flex-1">
               <input value={activeChapter.title} onChange={(event) => updateActiveChapter({ title: event.target.value })} className="w-full bg-transparent text-sm font-semibold outline-none" />
               <div className="mt-0.5 flex items-center gap-3 text-xs text-muted-foreground"><span>{countWords(activeChapter.content)} 字</span><span>{activeChapter.status === 'published' ? '已发布' : '草稿'}</span><span>{saveState === 'saved' ? '已保存' : '有改动'}</span></div>
@@ -806,7 +2162,7 @@ export default function Home() {
               <button onClick={handleGenerate} className="rounded-md p-2 text-muted-foreground hover:bg-accent hover:text-primary" title="AI 扩写"><Sparkles className="h-4 w-4" /></button>
               <button onClick={handleSave} className="rounded-md p-2 text-muted-foreground hover:bg-accent hover:text-foreground" title="保存"><Save className="h-4 w-4" /></button>
               <button onClick={resetWorkspace} className="rounded-md p-2 text-muted-foreground hover:bg-accent hover:text-foreground" title="重置示例项目"><RefreshCcw className="h-4 w-4" /></button>
-              <button onClick={() => updateActiveChapter({ status: 'published' })} className="rounded-md p-2 text-muted-foreground hover:bg-accent hover:text-foreground" title="发布"><Check className="h-4 w-4" /></button>
+              <button onClick={publishActiveChapter} className="rounded-md p-2 text-muted-foreground hover:bg-accent hover:text-foreground" title="发布"><Check className="h-4 w-4" /></button>
             </div>
           </header>
 
@@ -825,7 +2181,7 @@ export default function Home() {
                 const target = event.currentTarget
                 setSelectionText(target.value.slice(target.selectionStart, target.selectionEnd))
                 if (target.value.endsWith('/ai')) setSceneInput('')
-              }} className="min-h-[52vh] w-full resize-none rounded-none border-0 bg-transparent text-[16px] leading-8 outline-none" placeholder="从一个短画面开始，或输入 /ai 唤醒扩写..." />
+              }} className="paper-panel min-h-[52vh] w-full resize-none rounded-md border border-border px-5 py-4 text-[16px] leading-8 shadow-sm outline-none focus:ring-2 focus:ring-primary/15" placeholder="从一个短画面开始，或输入 /ai 唤醒扩写..." />
 
               <div className="mt-5 rounded-md border border-border bg-card p-4">
                 <div className="mb-3 flex items-center justify-between gap-3">
@@ -849,7 +2205,7 @@ export default function Home() {
           </section>
         </main>
 
-        <aside className={cn('h-full border-l border-border bg-card transition-all duration-200', rightOpen ? 'w-[340px]' : 'w-14')}>
+        <aside className={cn('h-full border-l border-border bg-card/95 shadow-sm backdrop-blur transition-all duration-200', rightOpen ? 'w-[340px]' : 'w-14')}>
           <div className="flex h-14 items-center justify-between border-b border-border px-3">
             {rightOpen && <div className="font-semibold">AI 副驾</div>}
             <button className="rounded-md p-2 text-muted-foreground hover:bg-accent hover:text-foreground" onClick={() => setRightOpen((value) => !value)} title={rightOpen ? '收起右栏' : '展开右栏'}>
@@ -861,7 +2217,7 @@ export default function Home() {
             <div className="flex h-[calc(100%-3.5rem)] flex-col">
               <div className="grid grid-cols-4 border-b border-border text-sm">
                 {[
-                  ['starter', PenLine, '开局'],
+                  ['starter', PenLine, '向导'],
                   ['copilot', MessageSquare, '伴写'],
                   ['factory', Clapperboard, '衍生'],
                   ['inspector', FileText, 'Prompt'],
@@ -875,7 +2231,10 @@ export default function Home() {
                 <div className="flex min-h-0 flex-1 flex-col">
                   <div className="border-b border-border p-4">
                     <div className="mb-2 flex items-center justify-between gap-2">
-                      <div className="text-sm font-semibold">新书开局向导</div>
+                      <div>
+                        <div className="text-sm font-semibold">创作向导</div>
+                        <div className="mt-0.5 text-xs text-muted-foreground">{isGuideContinuation ? '当前章节卡文时，生成下一步方案' : '新书开局时，先搭第一章骨架'}</div>
+                      </div>
                       <div className="text-xs text-muted-foreground">{starterStep + 1}/{starterQuestions.length}</div>
                     </div>
                     <div className="h-1.5 overflow-hidden rounded-full bg-secondary">
@@ -884,7 +2243,7 @@ export default function Home() {
                   </div>
 
                   <div className="flex-1 overflow-y-auto p-4">
-                    <div className="rounded-md border border-border bg-background p-4">
+                    <div className="rounded-md border border-border bg-background/90 p-4">
                       <div className="mb-1 text-xs text-muted-foreground">{currentStarterQuestion.title}</div>
                       <h3 className="text-sm font-semibold leading-6">{currentStarterQuestion.prompt}</h3>
                       <textarea
@@ -894,7 +2253,7 @@ export default function Home() {
                         placeholder={currentStarterQuestion.placeholder}
                       />
                       <div className="mt-3 flex flex-wrap gap-1.5">
-                        {currentStarterQuestion.chips.map((chip) => (
+                        {currentStarterChips.map((chip) => (
                           <button
                             key={chip}
                             onClick={() => updateStarterAnswer(currentStarterQuestion.field, chip)}
@@ -922,8 +2281,8 @@ export default function Home() {
                       </button>
                     </div>
 
-                    <div className="mt-4 rounded-md border border-border bg-background p-3">
-                      <div className="mb-2 flex items-center gap-2 text-sm font-medium"><Sparkles className="h-4 w-4 text-primary" /> 开局蓝图</div>
+                    <div className="mt-4 rounded-md border border-border bg-background/90 p-3">
+                      <div className="mb-2 flex items-center gap-2 text-sm font-medium"><Sparkles className="h-4 w-4 text-primary" /> {isGuideContinuation ? '续写蓝图' : '开局蓝图'}</div>
                       <div className="space-y-2 text-xs leading-5 text-muted-foreground">
                         <p>题材：{starterAnswers.genre}</p>
                         <p>情绪：{starterAnswers.tone}</p>
@@ -933,8 +2292,8 @@ export default function Home() {
                     </div>
 
                     <div className="mt-3 flex gap-2">
-                      <button onClick={generateStarter} className="flex-1 rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground">生成第一章</button>
-                      <button onClick={applyStarter} disabled={!starterOutput} className="flex-1 rounded-md border border-border px-3 py-2 text-sm disabled:opacity-40">写入项目</button>
+                      <button onClick={generateStarter} className="flex-1 rounded-md bg-primary px-3 py-2 text-sm font-medium text-primary-foreground">{isGuideContinuation ? '生成方案' : '生成第一章'}</button>
+                      <button onClick={applyStarter} disabled={!starterOutput} className="flex-1 rounded-md border border-border px-3 py-2 text-sm disabled:opacity-40">{isGuideContinuation ? '追加到章节' : '写入项目'}</button>
                     </div>
 
                     {starterOutput && (
@@ -951,6 +2310,28 @@ export default function Home() {
                 <div className="flex min-h-0 flex-1 flex-col">
                   <div className="flex gap-1 border-b border-border p-2">
                     {(['editor', 'partner', 'planner'] as AssistantMode[]).map((mode) => <button key={mode} onClick={() => setAssistantMode(mode)} className={cn('flex-1 rounded-md px-2 py-1.5 text-xs', assistantMode === mode ? 'bg-primary text-primary-foreground' : 'hover:bg-accent')}>{mode === 'editor' ? '责编' : mode === 'planner' ? '军师' : '搭子'}</button>)}
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 border-b border-border p-3">
+                    <QuickActionButton label="续写下一段" onClick={() => applyQuickAction('continue')} />
+                    <QuickActionButton label="更有画面感" onClick={() => applyQuickAction('visual')} />
+                    <QuickActionButton label="加冲突" onClick={() => applyQuickAction('conflict')} />
+                    <QuickActionButton label="加反转" onClick={() => applyQuickAction('twist')} />
+                    <QuickActionButton label="网文风润色" onClick={() => applyQuickAction('webnovel')} />
+                    <QuickActionButton label="检查哪里无聊" onClick={() => applyQuickAction('diagnose')} />
+                  </div>
+                  <div className="border-b border-border p-3">
+                    <button onClick={() => copyCodexTask('rescue')} className="w-full rounded-md border border-dashed border-primary/40 bg-primary/5 px-3 py-2 text-xs font-medium text-primary hover:bg-primary/10">
+                      复制给 Codex 做卡文急救
+                    </button>
+                    <textarea
+                      value={codexResult}
+                      onChange={(event) => setCodexResult(event.target.value)}
+                      className="mt-2 min-h-[72px] w-full resize-none rounded-md border border-input bg-background px-2 py-1.5 text-xs leading-5 outline-none"
+                      placeholder="把 Codex 返回的下一段粘回来..."
+                    />
+                    <button onClick={applyCodexResult} disabled={!codexResult.trim()} className="mt-2 w-full rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground disabled:opacity-40">
+                      写入当前章节
+                    </button>
                   </div>
                   <div className="flex-1 space-y-3 overflow-y-auto p-3">
                     {messages.map((message) => <div key={message.id} className={cn('rounded-md p-3 text-sm leading-6', message.role === 'user' ? 'ml-8 bg-primary text-primary-foreground' : 'mr-8 bg-accent')}>{message.content}</div>)}
@@ -1000,14 +2381,31 @@ export default function Home() {
           )}
         </aside>
       </div>
+      )}
     </div>
   )
 }
 
 function ToolButton({ icon: Icon, title, text, onClick }: { icon: typeof Sparkles; title: string; text: string; onClick: () => void }) {
-  return <button onClick={onClick} className="w-full rounded-md border border-border bg-background p-3 text-left hover:border-primary/40 hover:bg-accent"><div className="flex items-center gap-2 text-sm font-medium"><Icon className="h-4 w-4 text-primary" />{title}<ChevronRight className="ml-auto h-4 w-4 text-muted-foreground" /></div><p className="mt-1 text-xs leading-5 text-muted-foreground">{text}</p></button>
+  return <button onClick={onClick} className="w-full rounded-md border border-border bg-background/90 p-3 text-left transition hover:border-primary/40 hover:bg-accent"><div className="flex items-center gap-2 text-sm font-medium"><Icon className="h-4 w-4 text-primary" />{title}<ChevronRight className="ml-auto h-4 w-4 text-muted-foreground" /></div><p className="mt-1 text-xs leading-5 text-muted-foreground">{text}</p></button>
+}
+
+function QuickActionButton({ label, onClick }: { label: string; onClick: () => void }) {
+  return <button onClick={onClick} className="rounded-md border border-border bg-background/90 px-2 py-2 text-xs transition hover:border-primary hover:bg-primary/5 hover:text-primary">{label}</button>
+}
+
+function FeatureCard({ icon: Icon, title, text }: { icon: typeof Sparkles; title: string; text: string }) {
+  return (
+    <div className="rounded-md border border-border bg-card/95 p-4 shadow-sm transition hover:-translate-y-0.5 hover:border-primary/30">
+      <div className="mb-3 flex h-8 w-8 items-center justify-center rounded-md bg-primary/10 text-primary ring-1 ring-primary/15">
+        <Icon className="h-4 w-4" />
+      </div>
+      <h3 className="text-sm font-semibold">{title}</h3>
+      <p className="mt-2 text-xs leading-5 text-muted-foreground">{text}</p>
+    </div>
+  )
 }
 
 function InspectorBlock({ title, content }: { title: string; content: string }) {
-  return <section><h3 className="mb-2 text-xs font-medium text-muted-foreground">{title}</h3><div className="rounded-md border border-border bg-background p-3 text-xs leading-5 whitespace-pre-wrap">{content}</div></section>
+  return <section><h3 className="mb-2 text-xs font-medium text-muted-foreground">{title}</h3><div className="rounded-md border border-border bg-background/90 p-3 text-xs leading-5 whitespace-pre-wrap">{content}</div></section>
 }

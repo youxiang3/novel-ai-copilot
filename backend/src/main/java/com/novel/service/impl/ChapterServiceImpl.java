@@ -83,13 +83,20 @@ public class ChapterServiceImpl extends ServiceImpl<ChapterMapper, Chapter> impl
     @Override
     public boolean updateById(Chapter entity) {
         Chapter existing = getById(entity.getId());
+        if (existing == null) {
+            throw new RuntimeException("章节不存在");
+        }
         validateNovelOwnership(existing.getNovelId());
+        entity.setNovelId(existing.getNovelId());
         return super.updateById(entity);
     }
 
     @Override
     public boolean removeById(UUID id) {
         Chapter existing = getById(id);
+        if (existing == null) {
+            throw new RuntimeException("章节不存在");
+        }
         validateNovelOwnership(existing.getNovelId());
         return super.removeById(id);
     }
@@ -100,7 +107,7 @@ public class ChapterServiceImpl extends ServiceImpl<ChapterMapper, Chapter> impl
             throw new RuntimeException("小说不存在");
         }
         UUID currentUserId = UserContext.getUserId();
-        if (currentUserId != null && !novel.getUserId().equals(currentUserId)) {
+        if (currentUserId == null || !novel.getUserId().equals(currentUserId)) {
             throw new RuntimeException("无权访问");
         }
     }
