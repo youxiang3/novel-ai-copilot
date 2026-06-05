@@ -1,18 +1,15 @@
 package com.novel.entity;
 
 import com.baomidou.mybatisplus.annotation.IdType;
-import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
-import com.baomidou.mybatisplus.extension.handlers.JacksonTypeHandler;
 import lombok.Data;
 
 import java.time.LocalDateTime;
-import java.util.Map;
 import java.util.UUID;
 
 @Data
-@TableName(value = "story_state", autoResultMap = true)
+@TableName("story_state")
 public class StoryState {
 
     @TableId(type = IdType.AUTO)
@@ -22,11 +19,9 @@ public class StoryState {
 
     private String currentTimeline;
 
-    @TableField(typeHandler = JacksonTypeHandler.class)
-    private Map<String, Object> keyEvents;
+    private String keyEvents;
 
-    @TableField(typeHandler = JacksonTypeHandler.class)
-    private Map<String, Object> protagonistStatus;
+    private String protagonistStatus;
 
     private LocalDateTime createTime;
 

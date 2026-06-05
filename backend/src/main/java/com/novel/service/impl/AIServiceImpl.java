@@ -8,10 +8,11 @@ import com.novel.mapper.UserModelConfigMapper;
 import com.novel.service.AiService;
 import com.novel.service.ModelConfigCryptoService;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.ai.chat.ChatClient;
-import org.springframework.ai.chat.ChatResponse;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.UserMessage;
+import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
@@ -29,7 +30,7 @@ import java.util.UUID;
 
 @Slf4j
 @Service
-public class AiServiceImpl implements AiService {
+public class AIServiceImpl implements AiService {
 
     private final ChatClient chatClient;
     private final UserModelConfigMapper modelConfigMapper;
@@ -37,8 +38,8 @@ public class AiServiceImpl implements AiService {
     private final ObjectMapper objectMapper;
     private final HttpClient httpClient;
 
-    public AiServiceImpl(ChatClient chatClient, UserModelConfigMapper modelConfigMapper, ModelConfigCryptoService cryptoService, ObjectMapper objectMapper) {
-        this.chatClient = chatClient;
+    public AIServiceImpl(ObjectProvider<ChatClient> chatClientProvider, UserModelConfigMapper modelConfigMapper, ModelConfigCryptoService cryptoService, ObjectMapper objectMapper) {
+        this.chatClient = chatClientProvider.getIfAvailable();
         this.modelConfigMapper = modelConfigMapper;
         this.cryptoService = cryptoService;
         this.objectMapper = objectMapper;
@@ -54,6 +55,9 @@ public class AiServiceImpl implements AiService {
         UserModelConfig config = currentModelConfig();
         if (hasUsableCustomConfig(config)) {
             return callOpenAiCompatible(prompt, config);
+        }
+        if (chatClient == null) {
+            throw new RuntimeException("未配置可用模型：请保存用户模型配置，或配置 Spring AI ChatClient");
         }
         
         Message message = new UserMessage(prompt);
@@ -74,12 +78,14 @@ public class AiServiceImpl implements AiService {
         if (hasUsableCustomConfig(config)) {
             return streamOpenAiCompatible(prompt, config);
         }
+        if (chatClient == null) {
+            return Flux.error(new RuntimeException("未配置可用模型：请保存用户模型配置，或配置 Spring AI ChatClient"));
+        }
         
         Message message = new UserMessage(prompt);
         Prompt aiPrompt = new Prompt(List.of(message));
         
-        return chatClient.stream(aiPrompt)
-                .map(chatResponse -> chatResponse.getResult().getOutput().getContent());
+        return Flux.just(call(prompt));
     }
 
     private UserModelConfig currentModelConfig() {

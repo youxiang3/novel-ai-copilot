@@ -32,6 +32,9 @@ public class NovelServiceImpl extends ServiceImpl<NovelMapper, Novel> implements
 
     @Override
     public boolean save(Novel entity) {
+        if (entity.getId() == null) {
+            entity.setId(UUID.randomUUID());
+        }
         if (entity.getUserId() == null) {
             entity.setUserId(UserContext.getUserId());
         }
@@ -41,6 +44,9 @@ public class NovelServiceImpl extends ServiceImpl<NovelMapper, Novel> implements
     @Override
     public boolean updateById(Novel entity) {
         Novel existing = getById(entity.getId());
+        if (existing == null) {
+            throw new RuntimeException("小说不存在");
+        }
         validateOwnership(existing.getUserId());
         return super.updateById(entity);
     }
@@ -48,6 +54,9 @@ public class NovelServiceImpl extends ServiceImpl<NovelMapper, Novel> implements
     @Override
     public boolean removeById(UUID id) {
         Novel existing = getById(id);
+        if (existing == null) {
+            throw new RuntimeException("小说不存在");
+        }
         validateOwnership(existing.getUserId());
         return super.removeById(id);
     }

@@ -45,10 +45,12 @@ public class ModelConfigController {
     public Result<ModelConfigResponse> save(@RequestBody ModelConfigRequest request) {
         UUID userId = requireUser();
         UserModelConfig config = modelConfigMapper.selectActiveByUserId(userId);
+        boolean isNew = config == null;
         LocalDateTime now = LocalDateTime.now();
 
-        if (config == null) {
+        if (isNew) {
             config = new UserModelConfig();
+            config.setId(UUID.randomUUID());
             config.setUserId(userId);
             config.setActive(true);
             config.setCreateTime(now);
@@ -62,7 +64,7 @@ public class ModelConfigController {
             config.setApiKeyEncrypted(cryptoService.encrypt(request.getApiKey()));
         }
 
-        if (config.getId() == null) {
+        if (isNew) {
             modelConfigMapper.insert(config);
         } else {
             modelConfigMapper.updateById(config);

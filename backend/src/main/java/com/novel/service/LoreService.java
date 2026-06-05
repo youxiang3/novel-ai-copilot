@@ -11,4 +11,8 @@ public interface LoreService extends IService<Lore> {
     List<Lore> listByNovelId(UUID novelId);
 
     List<Lore> listByNovelIdAndCategory(UUID novelId, String category);
+
+    Lore getOwnedById(UUID id);
+
+    boolean removeById(UUID id);
 }

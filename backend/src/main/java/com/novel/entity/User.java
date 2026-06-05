@@ -9,7 +9,7 @@ import java.time.LocalDateTime;
 import java.util.UUID;
 
 @Data
-@TableName("user")
+@TableName("\"user\"")
 public class User {
 
     @TableId(type = IdType.AUTO)

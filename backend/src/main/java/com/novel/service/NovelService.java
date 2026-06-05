@@ -11,4 +11,6 @@ public interface NovelService extends IService<Novel> {
     List<Novel> listByUserId(UUID userId);
 
     Novel getDetailById(UUID id);
+
+    boolean removeById(UUID id);
 }

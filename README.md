@@ -32,7 +32,7 @@ novel-ai-copilot/
 
 ## Project Status
 
-See `docs/PROJECT_STATUS.md` for the current completed / unfinished feature list, product-document coverage, and next-step plan.
+See `docs/PROJECT_STATUS.md` for the current completed / unfinished feature list, product-document coverage, and next-step plan. For local database setup, curl samples, and end-to-end verification notes, see `docs/E2E_TESTING.md`.
 
 ## Frontend Setup
 
@@ -75,10 +75,39 @@ Create a local environment file or configure system environment variables based 
 ```text
 AI_API_KEY=sk-xxx
 AI_BASE_URL=https://api.deepseek.com/v1
+AI_MODEL=deepseek-chat
+AI_TEMPERATURE=0.7
+AI_MAX_TOKENS=4096
+DB_HOST=localhost
+DB_PORT=5432
+DB_NAME=novel_ai_copilot
+DB_SCHEMA=public
+DB_USERNAME=postgres
 DB_PASSWORD=postgres
 REDIS_HOST=localhost
 REDIS_PORT=6379
-JWT_SECRET=change-me-in-production
+JWT_SECRET=change-me-in-production-at-least-32-chars
+JWT_EXPIRATION=604800
+JWT_ISSUER=novel-ai-copilot
+JWT_AUDIENCE=novel-ai-users
+ENCRYPTION_KEY=change-me-32-byte-key-for-dev-only
+SPRING_PROFILES_ACTIVE=dev
+SERVER_PORT=8080
+FRONTEND_ORIGIN=http://localhost:3000
+LOG_LEVEL=DEBUG
+```
+
+Initialize PostgreSQL before the first backend run:
+
+```powershell
+createdb -h localhost -p 5432 -U postgres novel_ai_copilot
+psql -h localhost -p 5432 -U postgres -d novel_ai_copilot -f backend/src/main/resources/db/schema.sql
+```
+
+Make sure Redis is listening on `localhost:6379`:
+
+```powershell
+Test-NetConnection -ComputerName localhost -Port 6379
 ```
 
 Run the backend:
@@ -102,7 +131,7 @@ http://localhost:8080/swagger-ui.html
 
 ## Development Status
 
-This repository is currently an active prototype. The frontend workspace and product document are ahead of full backend integration. The next major milestone is adding a complete work overview panel for outline, characters, world rules, and story assets, then wiring the frontend chapter, Lore, and AI generation flows to the Spring Boot APIs and database.
+This repository is currently an active prototype. The frontend workspace, Skill interfaces, and Agent Task MVP are in place and compile successfully. The next milestone is completing a real PostgreSQL-backed HTTP verification run for auth, novels, chapters, Lore, model configuration, Skill endpoints, and Agent automatic novel creation.
 
 ## Important Notes
 

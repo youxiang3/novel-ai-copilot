@@ -31,7 +31,7 @@ public class LoreController {
     @GetMapping("/{id}")
     @Operation(summary = "获取设定详情")
     public Result<Lore> getById(@PathVariable UUID id) {
-        return Result.success(loreService.getById(id));
+        return Result.success(loreService.getOwnedById(id));
     }
 
     @PostMapping

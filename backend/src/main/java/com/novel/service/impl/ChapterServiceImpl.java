@@ -42,6 +42,16 @@ public class ChapterServiceImpl extends ServiceImpl<ChapterMapper, Chapter> impl
     }
 
     @Override
+    public Chapter getOwnedById(UUID id) {
+        Chapter chapter = getById(id);
+        if (chapter == null) {
+            throw new RuntimeException("章节不存在");
+        }
+        validateNovelOwnership(chapter.getNovelId());
+        return chapter;
+    }
+
+    @Override
     public List<Chapter> getPreviousChapters(UUID novelId, Integer chapterNumber, Integer limit) {
         validateNovelOwnership(novelId);
         return baseMapper.selectPreviousChapters(novelId, chapterNumber, limit);
@@ -76,7 +86,13 @@ public class ChapterServiceImpl extends ServiceImpl<ChapterMapper, Chapter> impl
 
     @Override
     public boolean save(Chapter entity) {
+        if (entity.getId() == null) {
+            entity.setId(UUID.randomUUID());
+        }
         validateNovelOwnership(entity.getNovelId());
+        if (entity.getContent() != null) {
+            entity.setWordCount(entity.getContent().length());
+        }
         return super.save(entity);
     }
 
@@ -88,6 +104,9 @@ public class ChapterServiceImpl extends ServiceImpl<ChapterMapper, Chapter> impl
         }
         validateNovelOwnership(existing.getNovelId());
         entity.setNovelId(existing.getNovelId());
+        if (entity.getContent() != null) {
+            entity.setWordCount(entity.getContent().length());
+        }
         return super.updateById(entity);
     }
 

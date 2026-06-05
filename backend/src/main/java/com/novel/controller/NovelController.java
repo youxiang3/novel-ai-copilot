@@ -65,6 +65,9 @@ public class NovelController {
     @Operation(summary = "更新小说")
     public Result<Void> update(@PathVariable UUID id, @RequestBody Novel novel) {
         Novel existing = novelService.getById(id);
+        if (existing == null) {
+            return Result.error(404, "小说不存在");
+        }
         validateOwnership(existing.getUserId());
         novel.setId(id);
         novelService.updateById(novel);
@@ -75,6 +78,9 @@ public class NovelController {
     @Operation(summary = "删除小说")
     public Result<Void> delete(@PathVariable UUID id) {
         Novel novel = novelService.getById(id);
+        if (novel == null) {
+            return Result.error(404, "小说不存在");
+        }
         validateOwnership(novel.getUserId());
         novelService.removeById(id);
         return Result.success();

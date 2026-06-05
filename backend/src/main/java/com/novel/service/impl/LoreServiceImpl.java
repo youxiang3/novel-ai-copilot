@@ -32,7 +32,20 @@ public class LoreServiceImpl extends ServiceImpl<LoreMapper, Lore> implements Lo
     }
 
     @Override
+    public Lore getOwnedById(UUID id) {
+        Lore existing = getById(id);
+        if (existing == null) {
+            throw new RuntimeException("设定不存在");
+        }
+        validateNovelOwnership(existing.getNovelId());
+        return existing;
+    }
+
+    @Override
     public boolean save(Lore entity) {
+        if (entity.getId() == null) {
+            entity.setId(UUID.randomUUID());
+        }
         validateNovelOwnership(entity.getNovelId());
         return super.save(entity);
     }

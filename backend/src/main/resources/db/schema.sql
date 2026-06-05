@@ -1,13 +1,12 @@
--- ============================================
+﻿-- ============================================
 -- NovelAI Copilot - PostgreSQL Database Schema
 -- ============================================
 
 -- 创建数据库（如需要）
 -- CREATE DATABASE novel_ai_copilot;
 
--- 启用 UUID 和 pgvector 扩展
+-- 启用 UUID 扩展。embedding 字段当前按 TEXT 保存，后续接入 pgvector 时再迁移为 vector 类型。
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
-CREATE EXTENSION IF NOT EXISTS "vector";
 
 -- ============================================
 -- 1. user (用户表)
@@ -18,8 +17,8 @@ CREATE TABLE IF NOT EXISTS "user" (
     password VARCHAR(255) NOT NULL,
     avatar VARCHAR(500),
     role VARCHAR(20) DEFAULT 'author' CHECK (role IN ('author', 'admin')),
-    create_time TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    update_time TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 COMMENT ON TABLE "user" IS '用户表';
@@ -44,8 +43,8 @@ CREATE TABLE IF NOT EXISTS user_model_config (
     model VARCHAR(100) NOT NULL,
     api_key_encrypted TEXT,
     active BOOLEAN DEFAULT true,
-    create_time TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    update_time TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT fk_user_model_config_user FOREIGN KEY (user_id) REFERENCES "user"(id) ON DELETE CASCADE
 );
 
@@ -60,8 +59,8 @@ CREATE TABLE IF NOT EXISTS novel (
     title VARCHAR(255) NOT NULL,
     global_outline TEXT,
     author_style_prompt TEXT,
-    create_time TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    update_time TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT fk_novel_user FOREIGN KEY (user_id) REFERENCES "user"(id) ON DELETE CASCADE
 );
 
@@ -87,8 +86,8 @@ CREATE TABLE IF NOT EXISTS chapter (
     content TEXT,
     word_count INTEGER DEFAULT 0,
     status VARCHAR(50) DEFAULT 'draft' CHECK (status IN ('draft', 'published')),
-    create_time TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    update_time TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT fk_chapter_novel FOREIGN KEY (novel_id) REFERENCES novel(id) ON DELETE CASCADE,
     CONSTRAINT uk_chapter_novel_number UNIQUE (novel_id, chapter_number)
 );
@@ -116,9 +115,9 @@ CREATE TABLE IF NOT EXISTS lore (
     category VARCHAR(50) NOT NULL CHECK (category IN ('character', 'location', 'item', 'sect', 'world_rule')),
     name VARCHAR(255) NOT NULL,
     content TEXT,
-    embedding vector(1536),
-    create_time TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    update_time TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    embedding TEXT,
+    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT fk_lore_novel FOREIGN KEY (novel_id) REFERENCES novel(id) ON DELETE CASCADE
 );
 
@@ -143,9 +142,9 @@ CREATE TABLE IF NOT EXISTS memory_summary (
     novel_id UUID NOT NULL,
     chapter_id UUID NOT NULL,
     summary_content VARCHAR(500),
-    embedding vector(1536),
-    create_time TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    update_time TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    embedding TEXT,
+    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT fk_summary_novel FOREIGN KEY (novel_id) REFERENCES novel(id) ON DELETE CASCADE,
     CONSTRAINT fk_summary_chapter FOREIGN KEY (chapter_id) REFERENCES chapter(id) ON DELETE CASCADE,
     CONSTRAINT uk_summary_chapter UNIQUE (chapter_id)
@@ -172,8 +171,8 @@ CREATE TABLE IF NOT EXISTS story_state (
     current_timeline VARCHAR(255),
     key_events JSONB,
     protagonist_status JSONB,
-    create_time TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    update_time TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT fk_state_novel FOREIGN KEY (novel_id) REFERENCES novel(id) ON DELETE CASCADE
 );
 
@@ -199,8 +198,8 @@ CREATE TABLE IF NOT EXISTS foreshadowing (
     content TEXT,
     status VARCHAR(20) DEFAULT 'pending' CHECK (status IN ('pending', 'setup', 'paid_off', 'forgotten')),
     importance INT DEFAULT 1,
-    create_time TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    update_time TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT fk_foreshadowing_novel FOREIGN KEY (novel_id) REFERENCES novel(id) ON DELETE CASCADE
 );
 
@@ -230,8 +229,8 @@ CREATE TABLE IF NOT EXISTS character_relationship (
     hatred_value INT DEFAULT 0 CHECK (hatred_value >= 0 AND hatred_value <= 100),
     intimacy_value INT DEFAULT 0 CHECK (intimacy_value >= 0 AND intimacy_value <= 100),
     fear_value INT DEFAULT 0 CHECK (fear_value >= 0 AND fear_value <= 100),
-    create_time TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    update_time TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT fk_relationship_novel FOREIGN KEY (novel_id) REFERENCES novel(id) ON DELETE CASCADE
 );
 
@@ -241,7 +240,7 @@ COMMENT ON COLUMN character_relationship.novel_id IS '所属小说ID';
 COMMENT ON COLUMN character_relationship.character_a IS '角色A的Lore ID';
 COMMENT ON COLUMN character_relationship.character_b IS '角色B的Lore ID';
 COMMENT ON COLUMN character_relationship.trust_value IS '信任值0-100';
-COMMENT ON COLUMN character_relationship.ihatred_value IS '仇恨值0-100';
+COMMENT ON COLUMN character_relationship.hatred_value IS '仇恨值0-100';
 COMMENT ON COLUMN character_relationship.intimacy_value IS '亲密度0-100';
 COMMENT ON COLUMN character_relationship.fear_value IS '恐惧值0-100';
 COMMENT ON COLUMN character_relationship.create_time IS '创建时间';
@@ -262,8 +261,8 @@ CREATE TABLE IF NOT EXISTS emotion_curve (
     mystery INT DEFAULT 50 CHECK (mystery >= 0 AND mystery <= 100),
     despair INT DEFAULT 50 CHECK (despair >= 0 AND despair <= 100),
     warmth INT DEFAULT 50 CHECK (warmth >= 0 AND warmth <= 100),
-    create_time TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    update_time TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT fk_emotion_novel FOREIGN KEY (novel_id) REFERENCES novel(id) ON DELETE CASCADE,
     CONSTRAINT fk_emotion_chapter FOREIGN KEY (chapter_id) REFERENCES chapter(id) ON DELETE CASCADE,
     CONSTRAINT uk_emotion_chapter UNIQUE (chapter_id)
@@ -296,7 +295,7 @@ CREATE TABLE IF NOT EXISTS ai_generation_log (
     response_snapshot TEXT,
     model_name VARCHAR(50),
     token_usage INT,
-    create_time TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT fk_ai_log_novel FOREIGN KEY (novel_id) REFERENCES novel(id) ON DELETE CASCADE
 );
 
@@ -323,10 +322,10 @@ CREATE TABLE IF NOT EXISTS inspiration (
     novel_id UUID NOT NULL,
     content TEXT,
     category VARCHAR(50) DEFAULT 'idea' CHECK (category IN ('idea', 'character', 'plot', 'world', 'dialogue')),
-    embedding vector(1536),
+    embedding TEXT,
     status VARCHAR(20) DEFAULT 'pending' CHECK (status IN ('pending', 'expanded', 'used', 'archived')),
-    create_time TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    update_time TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT fk_inspiration_novel FOREIGN KEY (novel_id) REFERENCES novel(id) ON DELETE CASCADE
 );
 
@@ -354,8 +353,8 @@ CREATE TABLE IF NOT EXISTS writing_skill (
     apply_chapter INT,
     parameters JSONB,
     status VARCHAR(20) DEFAULT 'applied' CHECK (status IN ('active', 'applied', 'disabled')),
-    create_time TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    update_time TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT fk_skill_novel FOREIGN KEY (novel_id) REFERENCES novel(id) ON DELETE CASCADE
 );
 
@@ -383,9 +382,9 @@ CREATE TABLE IF NOT EXISTS character_image (
     style VARCHAR(50) DEFAULT 'chinese_anime' CHECK (style IN ('chinese_anime', 'japanese_anime', 'realistic', 'cartoon', 'ink')),
     pose VARCHAR(50) DEFAULT 'normal' CHECK (pose IN ('normal', 'combat', 'sad', 'happy', 'angry', 'thinking')),
     is_primary BOOLEAN DEFAULT false,
-    embedding vector(1536),
-    create_time TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    update_time TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    embedding TEXT,
+    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT fk_character_image_novel FOREIGN KEY (novel_id) REFERENCES novel(id) ON DELETE CASCADE,
     CONSTRAINT fk_character_image_lore FOREIGN KEY (character_id) REFERENCES lore(id) ON DELETE CASCADE
 );
@@ -417,8 +416,8 @@ CREATE TABLE IF NOT EXISTS world_visual (
     description TEXT,
     image_url TEXT,
     lore_id UUID,
-    create_time TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    update_time TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT fk_world_visual_novel FOREIGN KEY (novel_id) REFERENCES novel(id) ON DELETE CASCADE
 );
 
@@ -452,8 +451,8 @@ CREATE TABLE IF NOT EXISTS plot_arc (
     climax_event TEXT,
     resolution_type VARCHAR(100),
     status VARCHAR(20) DEFAULT 'active' CHECK (status IN ('planning', 'active', 'completed', 'cancelled')),
-    create_time TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-    update_time TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT fk_plot_arc_novel FOREIGN KEY (novel_id) REFERENCES novel(id) ON DELETE CASCADE
 );
 
@@ -477,12 +476,92 @@ CREATE INDEX idx_plot_arc_novel_id ON plot_arc(novel_id);
 CREATE INDEX idx_plot_arc_status ON plot_arc(novel_id, status);
 
 -- ============================================
+-- 16. agent_authorization
+-- ============================================
+CREATE TABLE IF NOT EXISTS agent_authorization (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID NOT NULL,
+    agent_type VARCHAR(50) NOT NULL,
+    scopes TEXT,
+    status VARCHAR(20) DEFAULT 'ACTIVE' CHECK (status IN ('ACTIVE', 'REVOKED', 'EXPIRED')),
+    expires_at TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_agent_authorization_user FOREIGN KEY (user_id) REFERENCES "user"(id) ON DELETE CASCADE
+);
+
+CREATE INDEX idx_agent_authorization_user ON agent_authorization(user_id, agent_type, status);
+
+-- ============================================
+-- 17. agent_task
+-- ============================================
+CREATE TABLE IF NOT EXISTS agent_task (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID NOT NULL,
+    agent_type VARCHAR(50) NOT NULL,
+    title VARCHAR(255),
+    status VARCHAR(40) DEFAULT 'PENDING' CHECK (status IN ('PENDING', 'RUNNING', 'WAITING_USER_CONFIRMATION', 'SUCCEEDED', 'FAILED', 'CANCELLED')),
+    input_json TEXT,
+    result_json TEXT,
+    error_message TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    finished_at TIMESTAMP,
+    CONSTRAINT fk_agent_task_user FOREIGN KEY (user_id) REFERENCES "user"(id) ON DELETE CASCADE
+);
+
+CREATE INDEX idx_agent_task_user ON agent_task(user_id, agent_type, status);
+
+-- ============================================
+-- 18. agent_task_step
+-- ============================================
+CREATE TABLE IF NOT EXISTS agent_task_step (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    task_id UUID NOT NULL,
+    step_key VARCHAR(80) NOT NULL,
+    step_name VARCHAR(120) NOT NULL,
+    status VARCHAR(40) DEFAULT 'PENDING' CHECK (status IN ('PENDING', 'RUNNING', 'SUCCEEDED', 'FAILED', 'SKIPPED', 'CANCELLED')),
+    input_json TEXT,
+    output_json TEXT,
+    error_message TEXT,
+    started_at TIMESTAMP,
+    finished_at TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_agent_task_step_task FOREIGN KEY (task_id) REFERENCES agent_task(id) ON DELETE CASCADE
+);
+
+CREATE INDEX idx_agent_task_step_task ON agent_task_step(task_id, step_key);
+
+-- ============================================
+-- 19. agent_execution_log
+-- ============================================
+CREATE TABLE IF NOT EXISTS agent_execution_log (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    task_id UUID NOT NULL,
+    level VARCHAR(20) DEFAULT 'INFO' CHECK (level IN ('INFO', 'WARN', 'ERROR')),
+    message TEXT,
+    metadata_json TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_agent_execution_log_task FOREIGN KEY (task_id) REFERENCES agent_task(id) ON DELETE CASCADE
+);
+
+CREATE INDEX idx_agent_execution_log_task ON agent_execution_log(task_id, created_at);
+
+-- ============================================
 -- 创建更新时间自动更新触发器函数
 -- ============================================
 CREATE OR REPLACE FUNCTION update_update_time_column()
 RETURNS TRIGGER AS $$
 BEGIN
     NEW.update_time = CURRENT_TIMESTAMP;
+    RETURN NEW;
+END;
+$$ language 'plpgsql';
+
+CREATE OR REPLACE FUNCTION update_updated_at_column()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = CURRENT_TIMESTAMP;
     RETURN NEW;
 END;
 $$ language 'plpgsql';
@@ -571,3 +650,16 @@ CREATE TRIGGER update_plot_arc_update_time
     BEFORE UPDATE ON plot_arc
     FOR EACH ROW
     EXECUTE FUNCTION update_update_time_column();
+
+DROP TRIGGER IF EXISTS update_agent_authorization_updated_at ON agent_authorization;
+CREATE TRIGGER update_agent_authorization_updated_at
+    BEFORE UPDATE ON agent_authorization
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+
+DROP TRIGGER IF EXISTS update_agent_task_updated_at ON agent_task;
+CREATE TRIGGER update_agent_task_updated_at
+    BEFORE UPDATE ON agent_task
+    FOR EACH ROW
+    EXECUTE FUNCTION update_updated_at_column();
+

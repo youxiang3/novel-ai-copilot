@@ -12,7 +12,11 @@ public interface ChapterService extends IService<Chapter> {
 
     Chapter getByNovelIdAndNumber(UUID novelId, Integer chapterNumber);
 
+    Chapter getOwnedById(UUID id);
+
     List<Chapter> getPreviousChapters(UUID novelId, Integer chapterNumber, Integer limit);
 
     void publishChapter(UUID chapterId);
+
+    boolean removeById(UUID id);
 }

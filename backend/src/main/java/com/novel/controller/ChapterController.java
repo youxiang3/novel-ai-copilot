@@ -28,7 +28,7 @@ public class ChapterController {
     @GetMapping("/{id}")
     @Operation(summary = "获取章节详情")
     public Result<Chapter> getById(@PathVariable UUID id) {
-        return Result.success(chapterService.getById(id));
+        return Result.success(chapterService.getOwnedById(id));
     }
 
     @PostMapping
