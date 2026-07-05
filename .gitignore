@@ -31,3 +31,4 @@ Thumbs.db
 
 # Local runtime data
 *.local
+*.pid

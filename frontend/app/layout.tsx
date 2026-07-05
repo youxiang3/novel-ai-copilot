@@ -2,8 +2,8 @@ import type { Metadata } from 'next'
 import './globals.css'
 
 export const metadata: Metadata = {
-  title: 'Novel AI Copilot - 小说创作工作站',
-  description: 'AI-powered novel writing assistant',
+  title: '易写 - AI 写作工作台',
+  description: '专为中文创作者打造的 AI 写作工作台',
 }
 
 export default function RootLayout({

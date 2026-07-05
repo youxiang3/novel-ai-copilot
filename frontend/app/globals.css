@@ -57,6 +57,59 @@
 }
 
 @layer utilities {
+  .field-input {
+    @apply w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 outline-none focus:ring-4 focus:ring-slate-100;
+  }
+
+  .yixie-editorial {
+    --editorial-ink: #263241;
+    --editorial-ink-soft: #334155;
+    --editorial-accent: #0f766e;
+    --editorial-accent-soft: #e7f3ef;
+    --editorial-paper: #fbfcfb;
+    --editorial-line: #d9e2df;
+  }
+
+  .yixie-editorial .bg-violet-600,
+  .yixie-editorial .bg-blue-600 {
+    background-color: var(--editorial-ink) !important;
+  }
+
+  .yixie-editorial .hover\:bg-violet-500:hover,
+  .yixie-editorial .hover\:bg-blue-500:hover {
+    background-color: #1f2937 !important;
+  }
+
+  .yixie-editorial .text-violet-700,
+  .yixie-editorial .text-blue-700,
+  .yixie-editorial .text-violet-600,
+  .yixie-editorial .text-blue-600 {
+    color: var(--editorial-accent) !important;
+  }
+
+  .yixie-editorial .bg-violet-100,
+  .yixie-editorial .bg-blue-100,
+  .yixie-editorial .bg-violet-50,
+  .yixie-editorial .bg-blue-50 {
+    background-color: var(--editorial-accent-soft) !important;
+  }
+
+  .yixie-editorial .border-violet-200,
+  .yixie-editorial .border-blue-200,
+  .yixie-editorial .border-violet-300,
+  .yixie-editorial .border-blue-300 {
+    border-color: var(--editorial-line) !important;
+  }
+
+  .yixie-editorial .ring-violet-100,
+  .yixie-editorial .ring-blue-100 {
+    --tw-ring-color: rgb(15 118 110 / 0.12) !important;
+  }
+
+  .yixie-editorial .shadow-2xl {
+    box-shadow: 0 24px 70px rgb(15 23 42 / 0.14) !important;
+  }
+
   .paper-panel {
     background:
       linear-gradient(180deg, hsl(0 0% 100% / 0.94), hsl(185 35% 98% / 0.94)),
@@ -75,5 +128,100 @@
       linear-gradient(135deg, hsl(177 72% 31% / 0.10), transparent 38%),
       radial-gradient(circle at 80% 18%, hsl(42 82% 68% / 0.22), transparent 24%),
       linear-gradient(180deg, hsl(0 0% 100% / 0.92), hsl(190 38% 98% / 0.92));
+  }
+
+  .splash-inspiration-mist {
+    background:
+      radial-gradient(circle at 39% 45%, hsl(45 100% 78% / 0.18), transparent 16%),
+      radial-gradient(circle at 52% 32%, hsl(0 0% 100% / 0.10), transparent 12%),
+      linear-gradient(112deg, transparent 18%, hsl(48 100% 84% / 0.08) 38%, transparent 58%);
+    animation: splash-inspiration-mist 7s ease-in-out infinite;
+    transform: translateX(-12%);
+  }
+
+  .splash-ink-ribbon {
+    animation: splash-ink-ribbon 9s ease-in-out infinite;
+    filter: blur(0.2px);
+    transform: rotate(-11deg);
+  }
+
+  .splash-ink-ribbon-slow {
+    animation-duration: 12s;
+    animation-delay: -3s;
+    transform: rotate(8deg);
+  }
+
+  .splash-paper {
+    animation: splash-paper-float 7s ease-in-out infinite;
+  }
+
+  .splash-spark {
+    animation: splash-spark 3.8s ease-in-out infinite;
+  }
+
+  .splash-start-button {
+    box-shadow:
+      0 0 28px rgb(80 130 255 / 0.45),
+      0 14px 34px rgb(15 23 42 / 0.24),
+      inset 0 1px 0 rgb(255 255 255 / 0.34),
+      inset 0 -12px 24px rgb(22 40 110 / 0.16);
+  }
+
+  .splash-start-text {
+    font-family: "STKaiti", "KaiTi", "FangSong", serif;
+    font-size: 2.35rem;
+    font-weight: 700;
+    letter-spacing: 0;
+    line-height: 1;
+    color: transparent;
+    background: linear-gradient(180deg, #ffffff 5%, #dff6ff 42%, #7dd3fc 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    text-shadow:
+      0 0 8px hsl(0 0% 100% / 0.85),
+      0 0 18px hsl(199 100% 72% / 0.85),
+      0 0 34px hsl(217 100% 62% / 0.75);
+  }
+}
+
+@keyframes splash-inspiration-mist {
+  0%, 100% {
+    opacity: 0.34;
+    transform: translate3d(-10px, 0, 0) scale(1);
+  }
+  48% {
+    opacity: 0.82;
+    transform: translate3d(24px, -10px, 0) scale(1.04);
+  }
+}
+
+@keyframes splash-ink-ribbon {
+  0%, 100% {
+    opacity: 0.18;
+    transform: translate3d(0, 0, 0) rotate(-11deg) scale(1);
+  }
+  50% {
+    opacity: 0.44;
+    transform: translate3d(12px, -10px, 0) rotate(-7deg) scale(1.03);
+  }
+}
+
+@keyframes splash-paper-float {
+  0%, 100% {
+    transform: translate3d(0, 0, 0) rotate(var(--paper-rotate, 0deg));
+  }
+  50% {
+    transform: translate3d(12px, -18px, 0) rotate(calc(var(--paper-rotate, 0deg) + 4deg));
+  }
+}
+
+@keyframes splash-spark {
+  0%, 100% {
+    opacity: 0.24;
+    transform: scale(0.7);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.45);
   }
 }

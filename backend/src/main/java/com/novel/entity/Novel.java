@@ -19,6 +19,10 @@ public class Novel {
 
     private String title;
 
+    private String frontendWorkId;
+
+    private String savedWorkPayload;
+
     private String globalOutline;
 
     private String authorStylePrompt;

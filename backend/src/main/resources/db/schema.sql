@@ -57,6 +57,8 @@ CREATE TABLE IF NOT EXISTS novel (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     user_id UUID NOT NULL,
     title VARCHAR(255) NOT NULL,
+    frontend_work_id VARCHAR(120),
+    saved_work_payload TEXT,
     global_outline TEXT,
     author_style_prompt TEXT,
     create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -64,16 +66,22 @@ CREATE TABLE IF NOT EXISTS novel (
     CONSTRAINT fk_novel_user FOREIGN KEY (user_id) REFERENCES "user"(id) ON DELETE CASCADE
 );
 
+ALTER TABLE novel ADD COLUMN IF NOT EXISTS frontend_work_id VARCHAR(120);
+ALTER TABLE novel ADD COLUMN IF NOT EXISTS saved_work_payload TEXT;
+
 COMMENT ON TABLE novel IS '小说总表';
 COMMENT ON COLUMN novel.id IS '主键UUID';
 COMMENT ON COLUMN novel.user_id IS '所属用户ID';
 COMMENT ON COLUMN novel.title IS '小说标题';
+COMMENT ON COLUMN novel.frontend_work_id IS '前端作品库本地ID，用于渐进式同步';
+COMMENT ON COLUMN novel.saved_work_payload IS '前端 SavedWork 快照JSON，用于迁移期保留完整作品库字段';
 COMMENT ON COLUMN novel.global_outline IS '全局大纲';
 COMMENT ON COLUMN novel.author_style_prompt IS '作者文风Prompt';
 COMMENT ON COLUMN novel.create_time IS '创建时间';
 COMMENT ON COLUMN novel.update_time IS '更新时间';
 
 CREATE INDEX idx_novel_user_id ON novel(user_id);
+CREATE UNIQUE INDEX IF NOT EXISTS uk_novel_user_frontend_work ON novel(user_id, frontend_work_id) WHERE frontend_work_id IS NOT NULL;
 
 -- ============================================
 -- 3. chapter (章节表)
@@ -662,4 +670,3 @@ CREATE TRIGGER update_agent_task_updated_at
     BEFORE UPDATE ON agent_task
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
-
