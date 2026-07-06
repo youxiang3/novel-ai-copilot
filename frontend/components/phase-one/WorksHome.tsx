@@ -502,7 +502,7 @@ function ProjectCard({
             {(work.tags ?? []).slice(0, 2).map((tag) => <span key={tag} className="rounded bg-violet-50 px-2 py-0.5 text-xs text-violet-700">{tag}</span>)}
           </div>
         </div>
-        <p className="mt-3 line-clamp-2 min-h-[48px] text-sm leading-6 text-slate-600">{work.summary}</p>
+        <p className="mt-3 min-h-[48px] overflow-hidden text-sm leading-6 text-slate-600 [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:2]">{work.summary}</p>
         <div className="mt-3 flex items-center justify-between text-sm">
           <span className="font-semibold text-slate-900">{formatWan(work.words)} / {formatWan(work.targetWords ?? 0)}字</span>
           <span className="text-slate-500">{completion}%</span>

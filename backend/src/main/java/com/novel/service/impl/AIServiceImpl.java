@@ -30,7 +30,7 @@ import java.util.UUID;
 
 @Slf4j
 @Service
-public class AiServiceImpl implements AiService {
+public class AIServiceImpl implements AiService {
 
     private final ChatClient chatClient;
     private final UserModelConfigMapper modelConfigMapper;
@@ -38,7 +38,7 @@ public class AiServiceImpl implements AiService {
     private final ObjectMapper objectMapper;
     private final HttpClient httpClient;
 
-    public AiServiceImpl(ObjectProvider<ChatClient> chatClientProvider, UserModelConfigMapper modelConfigMapper, ModelConfigCryptoService cryptoService, ObjectMapper objectMapper) {
+    public AIServiceImpl(ObjectProvider<ChatClient> chatClientProvider, UserModelConfigMapper modelConfigMapper, ModelConfigCryptoService cryptoService, ObjectMapper objectMapper) {
         this.chatClient = chatClientProvider.getIfAvailable();
         this.modelConfigMapper = modelConfigMapper;
         this.cryptoService = cryptoService;

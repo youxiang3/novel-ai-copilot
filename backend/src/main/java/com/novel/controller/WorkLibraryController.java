@@ -5,6 +5,7 @@ import com.novel.common.Result;
 import com.novel.config.UserContext;
 import com.novel.dto.WorkSnapshotRequest;
 import com.novel.dto.WorkSnapshotResponse;
+import com.novel.dto.WorkChapterSnapshot;
 import com.novel.entity.Chapter;
 import com.novel.entity.Novel;
 import com.novel.service.ChapterService;
@@ -12,10 +13,16 @@ import com.novel.service.NovelService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDateTime;
+import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.LinkedHashMap;
+import java.util.stream.Collectors;
 import java.util.UUID;
 
 @RestController
@@ -39,6 +46,7 @@ public class WorkLibraryController {
 
     @PostMapping
     @Operation(summary = "保存或更新作品快照")
+    @Transactional
     public Result<WorkSnapshotResponse> save(@RequestBody WorkSnapshotRequest request) {
         UUID userId = requireUserId();
         if (isBlank(request.getFrontendWorkId())) {
@@ -68,7 +76,7 @@ public class WorkLibraryController {
             novelService.updateById(novel);
         }
 
-        syncFirstChapter(novel.getId(), request);
+        syncChapters(novel.getId(), request);
         return Result.success(toResponse(novelService.getById(novel.getId())));
     }
 
@@ -83,23 +91,62 @@ public class WorkLibraryController {
         return Result.success();
     }
 
-    private void syncFirstChapter(UUID novelId, WorkSnapshotRequest request) {
-        Chapter chapter = chapterService.getByNovelIdAndNumber(novelId, 1);
-        if (chapter == null) {
-            chapter = new Chapter();
-            chapter.setNovelId(novelId);
-            chapter.setChapterNumber(1);
-            chapter.setStatus("draft");
-            chapter.setCreateTime(LocalDateTime.now());
+    private void syncChapters(UUID novelId, WorkSnapshotRequest request) {
+        List<WorkChapterSnapshot> snapshots = normalizeChapterSnapshots(request);
+        if (snapshots.isEmpty()) {
+            return;
         }
-        chapter.setTitle(isBlank(request.getChapterTitle()) ? "第一章：未命名章节" : request.getChapterTitle());
-        chapter.setContent(request.getChapterText() == null ? "" : request.getChapterText());
-        chapter.setUpdateTime(LocalDateTime.now());
-        if (chapter.getId() == null) {
-            chapterService.save(chapter);
-        } else {
-            chapterService.updateById(chapter);
+
+        Map<Integer, Chapter> existingByNumber = chapterService.listByNovelId(novelId).stream()
+                .collect(Collectors.toMap(Chapter::getChapterNumber, chapter -> chapter, (left, right) -> left, LinkedHashMap::new));
+        Set<Integer> requestedNumbers = snapshots.stream()
+                .map(WorkChapterSnapshot::getChapterNumber)
+                .collect(Collectors.toSet());
+
+        for (WorkChapterSnapshot snapshot : snapshots) {
+            Chapter chapter = existingByNumber.get(snapshot.getChapterNumber());
+            if (chapter == null) {
+                chapter = new Chapter();
+                chapter.setNovelId(novelId);
+                chapter.setChapterNumber(snapshot.getChapterNumber());
+                chapter.setCreateTime(LocalDateTime.now());
+            }
+            chapter.setTitle(isBlank(snapshot.getTitle()) ? "第 " + snapshot.getChapterNumber() + " 章" : snapshot.getTitle());
+            chapter.setContent(snapshot.getContent() == null ? "" : snapshot.getContent());
+            chapter.setStatus("published".equals(snapshot.getStatus()) ? "published" : "draft");
+            chapter.setUpdateTime(LocalDateTime.now());
+            if (chapter.getId() == null) {
+                chapterService.save(chapter);
+            } else {
+                chapterService.updateById(chapter);
+            }
         }
+
+        if (request.getChapters() != null && !request.getChapters().isEmpty()) {
+            existingByNumber.values().stream()
+                    .filter(chapter -> !requestedNumbers.contains(chapter.getChapterNumber()))
+                    .forEach(chapter -> chapterService.removeById(chapter.getId()));
+        }
+    }
+
+    private List<WorkChapterSnapshot> normalizeChapterSnapshots(WorkSnapshotRequest request) {
+        if (request.getChapters() != null && !request.getChapters().isEmpty()) {
+            return request.getChapters().stream()
+                    .filter(chapter -> chapter != null)
+                    .map(new ChapterSnapshotNormalizer())
+                    .sorted(Comparator.comparing(WorkChapterSnapshot::getChapterNumber))
+                    .toList();
+        }
+
+        if (isBlank(request.getChapterTitle()) && isBlank(request.getChapterText())) {
+            return List.of();
+        }
+        WorkChapterSnapshot first = new WorkChapterSnapshot();
+        first.setChapterNumber(1);
+        first.setTitle(isBlank(request.getChapterTitle()) ? "第一章：未命名章节" : request.getChapterTitle());
+        first.setContent(request.getChapterText() == null ? "" : request.getChapterText());
+        first.setStatus("draft");
+        return List.of(first);
     }
 
     private WorkSnapshotResponse toResponse(Novel novel) {
@@ -112,7 +159,38 @@ public class WorkLibraryController {
         if (chapter != null) {
             response.setChapterId(chapter.getId());
         }
+        response.setChapters(chapterService.listByNovelId(novel.getId()).stream()
+                .map(this::toChapterSnapshot)
+                .toList());
         return response;
+    }
+
+    private WorkChapterSnapshot toChapterSnapshot(Chapter chapter) {
+        WorkChapterSnapshot snapshot = new WorkChapterSnapshot();
+        snapshot.setChapterNumber(chapter.getChapterNumber());
+        snapshot.setTitle(chapter.getTitle());
+        snapshot.setContent(chapter.getContent());
+        snapshot.setStatus(chapter.getStatus());
+        return snapshot;
+    }
+
+    private static class ChapterSnapshotNormalizer implements java.util.function.Function<WorkChapterSnapshot, WorkChapterSnapshot> {
+        private int fallbackNumber = 1;
+
+        @Override
+        public WorkChapterSnapshot apply(WorkChapterSnapshot source) {
+            WorkChapterSnapshot snapshot = new WorkChapterSnapshot();
+            int chapterNumber = source.getChapterNumber() == null || source.getChapterNumber() < 1
+                    ? fallbackNumber
+                    : source.getChapterNumber();
+            fallbackNumber = Math.max(fallbackNumber + 1, chapterNumber + 1);
+            snapshot.setFrontendChapterId(source.getFrontendChapterId());
+            snapshot.setChapterNumber(chapterNumber);
+            snapshot.setTitle(source.getTitle());
+            snapshot.setContent(source.getContent());
+            snapshot.setStatus(source.getStatus());
+            return snapshot;
+        }
     }
 
     private Novel findByFrontendWorkId(UUID userId, String frontendWorkId) {

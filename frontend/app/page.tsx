@@ -12,7 +12,7 @@ import { AppearanceSettingsPage, ExportCenterPage, ModelSettingsPage } from '@/c
 import { SkillPlaza } from '@/components/phase-one/SkillPlaza'
 import { SplashScreen } from '@/components/phase-one/SplashScreen'
 import { StoryGraphCenter } from '@/components/phase-one/StoryGraphCenter'
-import type { CreationMode, GuideDraft, OperationStatus, ParsedWorkResult, SavedWork, WorkItem, WorkStatus, WorkspaceStep } from '@/components/phase-one/types'
+import type { CreationMode, GuideDraft, OperationStatus, ParsedWorkResult, SavedWork, WorkChapter, WorkItem, WorkStatus, WorkspaceStep } from '@/components/phase-one/types'
 import { WebAiPromptModal } from '@/components/phase-one/WebAiPromptModal'
 import { WorksHome } from '@/components/phase-one/WorksHome'
 import { WritingWorkspace } from '@/components/phase-one/WritingWorkspace'
@@ -23,7 +23,14 @@ type WorkspaceView = 'overview' | 'editor' | 'lore' | 'memory' | 'checks'
 type LocalAccount = { username: string; account: string; password: string }
 type BackendSession = { token: string; username: string }
 type BackendResult<T> = { code: number; message: string; data: T }
-type WorkSnapshotResponse = { frontendWorkId: string; payload: string }
+type WorkSnapshotChapter = { frontendChapterId?: string; chapterNumber?: number; title?: string; content?: string; status?: string }
+type WorkSnapshotResponse = { frontendWorkId: string; payload: string; chapters?: WorkSnapshotChapter[] }
+type MigrationPrompt = {
+  token: string
+  backendWorks: SavedWork[]
+  localOfficialCount: number
+  localDraftCount: number
+} | null
 
 const accountStorageKey = 'yixie-local-accounts-v1'
 const worksStorageKey = 'yixie-works-library-v1'
@@ -34,14 +41,60 @@ function countChapterWords(text?: string) {
   return (text || '').replace(/\s/g, '').length
 }
 
+function normalizeWorkChapters(work: SavedWork): WorkChapter[] {
+  const rawChapters = Array.isArray(work.chapters) ? work.chapters : []
+  const normalized = rawChapters
+    .map((chapter, index) => normalizeWorkChapter(chapter, index))
+    .sort((a, b) => a.chapterNumber - b.chapterNumber)
+
+  if (normalized.length === 0) {
+    if (!work.chapterTitle && !work.chapterText) return []
+    return [normalizeWorkChapter({
+      id: 'chapter-1',
+      chapterNumber: 1,
+      title: work.chapterTitle || '第一章：未命名章节',
+      content: work.chapterText || '',
+      status: 'draft',
+      wordCount: countChapterWords(work.chapterText),
+    }, 0)]
+  }
+
+  const first = normalized[0]
+  normalized[0] = {
+    ...first,
+    title: work.chapterTitle || first.title,
+    content: typeof work.chapterText === 'string' ? work.chapterText : first.content,
+    wordCount: countChapterWords(typeof work.chapterText === 'string' ? work.chapterText : first.content),
+  }
+  return normalized
+}
+
+function normalizeWorkChapter(chapter: Partial<WorkChapter>, index: number): WorkChapter {
+  const content = typeof chapter.content === 'string' ? chapter.content : ''
+  return {
+    id: chapter.id || `chapter-${index + 1}`,
+    chapterNumber: Number.isFinite(chapter.chapterNumber) && Number(chapter.chapterNumber) > 0 ? Number(chapter.chapterNumber) : index + 1,
+    title: chapter.title || `第 ${index + 1} 章`,
+    content,
+    status: chapter.status === 'published' ? 'published' : 'draft',
+    wordCount: typeof chapter.wordCount === 'number' ? chapter.wordCount : countChapterWords(content),
+    createdAt: chapter.createdAt,
+    updatedAt: chapter.updatedAt,
+  }
+}
+
 function withChapterStats(work: SavedWork, markUpdated = false): SavedWork {
-  const words = countChapterWords(work.chapterText)
-  const hasChapter = Boolean(work.chapterText?.trim())
-  const chapterCount = hasChapter ? Math.max(1, work.chapterCount || 0) : 0
+  const chapters = normalizeWorkChapters(work)
+  const words = chapters.reduce((sum, chapter) => sum + countChapterWords(chapter.content), 0)
+  const hasChapter = chapters.some((chapter) => chapter.content.trim())
+  const chapterCount = chapters.length
   const monthlyUpdatedChapters = hasChapter && markUpdated ? Math.max(1, work.monthlyUpdatedChapters || 0) : Math.max(0, work.monthlyUpdatedChapters || 0)
 
   return {
     ...work,
+    chapterTitle: chapters[0]?.title || work.chapterTitle,
+    chapterText: typeof chapters[0]?.content === 'string' ? chapters[0].content : work.chapterText,
+    chapters,
     words,
     chapterCount,
     monthlyUpdatedChapters,
@@ -84,6 +137,8 @@ export default function Home() {
   const [workspaceView, setWorkspaceView] = useState<WorkspaceView>('editor')
   const [toast, setToast] = useState<{ type: 'success' | 'error'; title: string; message: string } | null>(null)
   const [backendToken, setBackendToken] = useState('')
+  const [backendAutoSaveEnabled, setBackendAutoSaveEnabled] = useState(false)
+  const [migrationPrompt, setMigrationPrompt] = useState<MigrationPrompt>(null)
 
   const sortedWorks = useMemo(() => works, [works])
   const shellStatusText = isGuest ? '游客 · 本地模式 · 未同步' : `${username} · 已登录 · 可同步`
@@ -103,7 +158,10 @@ export default function Home() {
 
   useEffect(() => {
     const savedToken = localStorage.getItem(backendTokenStorageKey)
-    if (savedToken) setBackendToken(savedToken)
+    if (savedToken) {
+      setBackendToken(savedToken)
+      setBackendAutoSaveEnabled(true)
+    }
   }, [])
 
   useEffect(() => {
@@ -112,11 +170,11 @@ export default function Home() {
   }, [works, worksHydrated])
 
   useEffect(() => {
-    if (isGuest || !backendToken || !worksHydrated) return
+    if (isGuest || !backendToken || !backendAutoSaveEnabled || !worksHydrated) return
     works.filter((work) => work.status === 'official').forEach((work) => {
       void saveWorkSnapshotToBackend(work, backendToken)
     })
-  }, [backendToken, isGuest, works, worksHydrated])
+  }, [backendAutoSaveEnabled, backendToken, isGuest, works, worksHydrated])
 
   function setFeedback(nextStatus: OperationStatus, nextMessage: string) {
     setStatus(nextStatus)
@@ -502,15 +560,51 @@ export default function Home() {
     setBackendToken(session.token)
     setUsername(session.username || username)
     const backendWorks = await fetchBackendWorkSnapshots(session.token)
-    if (backendWorks.length > 0) {
-      setWorks((current) => mergeWorks(current, backendWorks))
-      setFeedback('success', '已连接后端作品库，作品数据已合并到当前作品库。')
+    const localOfficialCount = works.filter((work) => work.status === 'official').length
+    const localDraftCount = works.filter((work) => work.status === 'local-draft').length
+    if (localOfficialCount > 0 || localDraftCount > 0) {
+      setMigrationPrompt({
+        token: session.token,
+        backendWorks,
+        localOfficialCount,
+        localDraftCount,
+      })
+      setFeedback('success', '已连接后端作品库。请选择是否把本地正式作品上传到账号。')
       return
     }
-    works.filter((work) => work.status === 'official').forEach((work) => {
-      void saveWorkSnapshotToBackend(work, session.token)
-    })
-    setFeedback('success', '已连接后端作品库，当前正式作品会自动保存到后端。')
+    if (backendWorks.length > 0) {
+      setWorks((current) => mergeWorks(current, backendWorks))
+      setFeedback('success', '已连接后端作品库，后端作品已读取到当前作品库。')
+    } else {
+      setFeedback('success', '已连接后端作品库。当前账号暂无后端作品。')
+    }
+    setBackendAutoSaveEnabled(true)
+  }
+
+  function handleMigrationChoice(choice: 'upload' | 'backend-only' | 'later') {
+    if (!migrationPrompt) return
+    const { token, backendWorks } = migrationPrompt
+    if (choice === 'upload') {
+      const officialWorks = works.filter((work) => work.status === 'official')
+      setWorks((current) => mergeWorks(current, backendWorks))
+      officialWorks.forEach((work) => {
+        void saveWorkSnapshotToBackend(work, token)
+      })
+      setBackendAutoSaveEnabled(true)
+      setMigrationPrompt(null)
+      setFeedback('success', `已上传 ${officialWorks.length} 个本地正式作品，临时草稿仍仅保存在本地。`)
+      return
+    }
+    if (choice === 'backend-only') {
+      setWorks((current) => mergeWorks(current, backendWorks))
+      setBackendAutoSaveEnabled(false)
+      setMigrationPrompt(null)
+      setFeedback('success', '已读取后端作品。本地作品暂不上传，后续保存前会继续保留本地优先。')
+      return
+    }
+    setBackendAutoSaveEnabled(false)
+    setMigrationPrompt(null)
+    setFeedback('success', '已暂缓迁移。本地作品不会自动上传到账号。')
   }
 
   async function authenticateBackend(payload: AuthPayload): Promise<BackendSession | null> {
@@ -550,7 +644,7 @@ export default function Home() {
       const result = await response.json() as BackendResult<WorkSnapshotResponse[]>
       if (result.code !== 200 || !Array.isArray(result.data)) return []
       return result.data
-        .map((snapshot) => parseBackendWork(snapshot.payload))
+        .map((snapshot) => parseBackendWork(snapshot.payload, snapshot.chapters))
         .filter((work): work is SavedWork => Boolean(work))
     } catch {
       return []
@@ -558,6 +652,8 @@ export default function Home() {
   }
 
   async function saveWorkSnapshotToBackend(work: SavedWork, token: string) {
+    const chapters = normalizeWorkChapters(work)
+    const payload = JSON.stringify({ ...work, chapters })
     try {
       await fetch(`${backendApiBase}/api/work-library`, {
         method: 'POST',
@@ -571,7 +667,14 @@ export default function Home() {
           globalOutline: Array.isArray(work.globalOutline) ? work.globalOutline.join('\n') : '',
           chapterTitle: work.chapterTitle,
           chapterText: work.chapterText,
-          payload: JSON.stringify(work),
+          chapters: chapters.map((chapter) => ({
+            frontendChapterId: chapter.id,
+            chapterNumber: chapter.chapterNumber,
+            title: chapter.title,
+            content: chapter.content,
+            status: chapter.status,
+          })),
+          payload,
         }),
       })
     } catch {
@@ -590,12 +693,24 @@ export default function Home() {
     }
   }
 
-  function parseBackendWork(payload: string): SavedWork | null {
+  function parseBackendWork(payload: string, backendChapters?: WorkSnapshotChapter[]): SavedWork | null {
     try {
       const parsed = JSON.parse(payload) as SavedWork
       if (!parsed?.id || !parsed?.title) return null
+      const chapters = Array.isArray(backendChapters) && backendChapters.length > 0
+        ? backendChapters.map((chapter, index) => normalizeWorkChapter({
+          id: chapter.frontendChapterId || `chapter-${chapter.chapterNumber || index + 1}`,
+          chapterNumber: chapter.chapterNumber || index + 1,
+          title: chapter.title || `第 ${index + 1} 章`,
+          content: chapter.content || '',
+          status: chapter.status === 'published' ? 'published' : 'draft',
+        }, index))
+        : normalizeWorkChapters(parsed)
       return withChapterStats({
         ...parsed,
+        chapters,
+        chapterTitle: chapters[0]?.title || parsed.chapterTitle,
+        chapterText: typeof chapters[0]?.content === 'string' ? chapters[0].content : parsed.chapterText,
         status: 'official',
         syncState: 'synced',
         tags: Array.isArray(parsed.tags) ? parsed.tags : ['正式作品', '后端已保存'],
@@ -628,6 +743,10 @@ export default function Home() {
 
   function updateActiveWorkContent(content: string) {
     setActiveWork((current) => current ? withChapterStats({ ...current, chapterText: content }) : current)
+  }
+
+  function updateActiveWorkDraft(work: SavedWork) {
+    setActiveWork(withChapterStats(work))
   }
 
   function appendAssistantText(text: string) {
@@ -700,6 +819,7 @@ export default function Home() {
       <CreateWorkModal open={showCreate} onClose={() => setShowCreate(false)} onSelect={selectCreationMode} />
       <WebAiPromptModal open={showWebAi} onClose={() => setShowWebAi(false)} onParsedResult={handleParsedResult} />
       <AuthModal open={authOpen} reason={authReason} loading={authLoading} error={authError} onClose={() => setAuthOpen(false)} onSubmit={handleAuthSubmit} />
+      <MigrationConfirmDialog prompt={migrationPrompt} onChoose={handleMigrationChoice} />
       <FeedbackDialog toast={toast} onClose={() => setToast(null)} />
       {screen !== 'splash' && (
         <CreativeAssistantPanel
@@ -885,7 +1005,7 @@ export default function Home() {
             initialView={workspaceView}
             onBackHome={() => setScreen('home')}
             onOpenStoryGraph={() => setScreen('story-graph')}
-            onContentChange={updateActiveWorkContent}
+            onWorkChange={updateActiveWorkDraft}
             onSave={saveActiveWork}
           />,
           'create',
@@ -914,6 +1034,46 @@ export default function Home() {
       )}
       {sharedModals}
     </>
+  )
+}
+
+function MigrationConfirmDialog({
+  prompt,
+  onChoose,
+}: {
+  prompt: MigrationPrompt
+  onChoose: (choice: 'upload' | 'backend-only' | 'later') => void
+}) {
+  if (!prompt) return null
+
+  return (
+    <div className="fixed inset-0 z-[88] flex items-center justify-center bg-slate-950/35 p-6 backdrop-blur-sm">
+      <section className="w-full max-w-xl rounded-lg border border-white/70 bg-white p-6 shadow-2xl">
+        <div className="flex items-start gap-4">
+          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-blue-100 text-xl font-semibold text-blue-700">云</div>
+          <div>
+            <h2 className="text-xl font-semibold text-slate-950">是否把本地作品迁移到账号？</h2>
+            <p className="mt-2 text-sm leading-6 text-slate-600">
+              已连接后端作品库。当前浏览器里有 {prompt.localOfficialCount} 个本地正式作品、{prompt.localDraftCount} 个临时草稿；账号后端已有 {prompt.backendWorks.length} 个作品快照。
+            </p>
+          </div>
+        </div>
+        <div className="mt-5 rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-800">
+          只有你确认后，本地正式作品才会上传到账号。临时草稿继续仅保存在当前浏览器，不会自动变成云端作品。
+        </div>
+        <div className="mt-6 grid gap-3 sm:grid-cols-3">
+          <button onClick={() => onChoose('upload')} className="rounded-md bg-blue-600 px-4 py-3 text-sm font-semibold text-white hover:bg-blue-500">
+            上传正式作品
+          </button>
+          <button onClick={() => onChoose('backend-only')} className="rounded-md border border-slate-200 px-4 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50">
+            仅读取账号作品
+          </button>
+          <button onClick={() => onChoose('later')} className="rounded-md border border-slate-200 px-4 py-3 text-sm font-semibold text-slate-500 hover:bg-slate-50">
+            稍后处理
+          </button>
+        </div>
+      </section>
+    </div>
   )
 }
 

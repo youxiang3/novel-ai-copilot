@@ -1,5 +1,64 @@
 # NovelAI Copilot 项目状态
-更新时间：2026-07-04
+更新时间：2026-07-06
+
+## 2026-07-06 多章节快照持久化 P0
+
+任务 ID：`NOVELAI-COPILOT-MULTI-CHAPTER-SNAPSHOT-P0`
+
+本轮按优先级先补齐作品/章节后端持久化底座，不重写完整多章节编辑器，不做云同步冲突解决，不接入新的 AI 能力。
+
+已完成：
+
+- 前端 `SavedWork` 新增 `chapters` 结构，用于承载多章节标题、正文、状态、字数和章节序号。
+- 前端保留 `chapterTitle` / `chapterText` 单章兼容字段，旧数据会自动规范化为第一章。
+- 前端作品统计改为基于 `chapters` 汇总字数和章节数，同时保持当前编辑器仍读写第一章兼容字段。
+- 前端保存到 `/api/work-library` 时会发送 `chapters` 数组，并把规范化后的章节写回 payload。
+- 后端新增 `WorkChapterSnapshot`。
+- `WorkSnapshotRequest` / `WorkSnapshotResponse` 支持 `chapters`。
+- `WorkLibraryController` 保存快照时会同步全部章节到 `chapter` 表；旧请求没有 `chapters` 时仍只同步第一章。
+- 当请求显式携带 `chapters` 时，后端会按章节号更新/新增章节，并移除快照中已不存在的旧章节，保持后端章节表与前端快照一致。
+- 修复后端 `AIServiceImpl.java` 文件名和 public class 名大小写不一致导致的编译阻塞。
+- 修复前端 `npm run build` 脚本中不存在的 Node 20 路径，改为当前机器可用的 `D:\nvm\v20.20.2\node.exe`。
+
+边界说明：
+
+- 当前还不是完整多章节编辑器；主编辑区仍以第一章兼容字段为主要编辑对象。
+- 当前还不是完整云同步；没有多端冲突解决、版本历史或恢复策略。
+- 当前迁移仍是“前端作品快照 + 后端章节表同步”的过渡方案，不是最终 Work / Chapter / ToolState / MemoryItem 全量规范化后端化。
+
+验证：
+
+- 已运行 `frontend` 下 `npm run build`，通过。
+- 已使用 JDK 21 运行 `backend` 下 `mvn -DskipTests compile`，通过。
+
+## 2026-07-06 多章节编辑器本地闭环 P0.5
+
+任务 ID：`NOVELAI-COPILOT-MULTI-CHAPTER-EDITOR-P0.5`
+
+本轮在多章节快照底座之上，把写作工作台从“第一章兼容编辑”推进到可操作的多章节编辑闭环。仍不引入 TipTap / Novel.js，不做拖拽排序，不做复杂版本历史。
+
+已完成：
+
+- 写作工作台左侧章节目录改为读取真实 `chapters` 数组。
+- 支持新建章节，自动分配章节序号和默认标题。
+- 支持切换当前章节。
+- 支持编辑当前章节标题和正文。
+- 支持删除章节，至少保留一个章节；删除后重新归一化章节序号。
+- 支持章节草稿 / 已发布状态切换。
+- 当前章节字数在顶部实时显示。
+- 保存作品时沿用现有保存链路：先更新本地作品库，再由后端快照同步接口写入多章节。
+- 保留旧 `chapterTitle` / `chapterText` 兼容字段，第一章仍会同步到兼容字段，避免破坏现有助手、导出和工具链路。
+
+边界说明：
+
+- 当前仍是轻量多章节编辑器，不是富文本编辑器。
+- 当前不支持章节拖拽排序、批量发布、章节版本历史。
+- 当前长篇记忆和 OOC 检查仍默认围绕当前选中章节生成结果，记忆后端化尚未完成。
+
+验证：
+
+- 已运行 `frontend` 下 `npm run build`，通过。
+- 已使用 JDK 21 运行 `backend` 下 `mvn -DskipTests compile`，通过。
 
 ## 2026-07-05 智能创作助手 AI P0
 

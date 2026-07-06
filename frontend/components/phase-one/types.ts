@@ -88,6 +88,7 @@ export interface GuideDraft {
 export interface SavedWork extends WorkItem {
   chapterTitle: string
   chapterText: string
+  chapters?: WorkChapter[]
   materials: {
     genre: string
     sellingPoint: string
@@ -95,6 +96,17 @@ export interface SavedWork extends WorkItem {
     summary: string
     nextStep: string
   }
+}
+
+export interface WorkChapter {
+  id: string
+  chapterNumber: number
+  title: string
+  content: string
+  status: 'draft' | 'published'
+  wordCount: number
+  createdAt?: string
+  updatedAt?: string
 }
 
 export interface StorylineOverview {

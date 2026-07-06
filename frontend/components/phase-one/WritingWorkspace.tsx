@@ -10,11 +10,14 @@ import {
   CheckCircle2,
   Clipboard,
   Database,
+  Download,
   Edit3,
   Eye,
   FileText,
+  Film,
   Flag,
   Folder,
+  Gamepad2,
   Globe2,
   History,
   Layers,
@@ -34,10 +37,12 @@ import {
   Wand2,
   X,
 } from 'lucide-react'
-import type { CheckIssue, CheckIssueType, IssueSeverity, LoreEntry, LoreType, MemoryEntry, MemoryType, OperationStatus, SavedWork } from './types'
+import type { CheckIssue, CheckIssueType, IssueSeverity, LoreEntry, LoreType, MemoryEntry, MemoryType, OperationStatus, SavedWork, WorkChapter } from './types'
 import { cn } from '@/lib/utils'
 
-type WorkspaceView = 'overview' | 'editor' | 'lore' | 'memory' | 'checks'
+type WorkspaceView = 'overview' | 'editor' | 'lore' | 'memory' | 'checks' | 'ip'
+type IpFactoryMode = 'screenplay' | 'game'
+const backendApiBase = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8080'
 type PromptRunStatus = 'copied' | 'parsed'
 
 interface PromptRunRecord {
@@ -116,7 +121,7 @@ export function WritingWorkspace({
   initialView = 'editor',
   onBackHome,
   onOpenStoryGraph,
-  onContentChange,
+  onWorkChange,
   onSave,
 }: {
   work: SavedWork
@@ -125,11 +130,12 @@ export function WritingWorkspace({
   initialView?: WorkspaceView
   onBackHome: () => void
   onOpenStoryGraph?: () => void
-  onContentChange: (content: string) => void
+  onWorkChange: (work: SavedWork) => void
   onSave: () => void
 }) {
   const work = normalizeWorkspaceWork(rawWork)
   const [view, setView] = useState<WorkspaceView>(initialView)
+  const [selectedChapterId, setSelectedChapterId] = useState('')
   const [loreEntries, setLoreEntries] = useState<LoreEntry[]>(() => seedLore(work))
   const [memoryEntries, setMemoryEntries] = useState<MemoryEntry[]>(() => seedMemory(work))
   const [checkIssues, setCheckIssues] = useState<CheckIssue[]>([])
@@ -143,13 +149,25 @@ export function WritingWorkspace({
   const [webAiTarget, setWebAiTarget] = useState<'check' | 'memory'>('check')
   const [webAiResult, setWebAiResult] = useState('')
   const [promptRuns, setPromptRuns] = useState<PromptRunRecord[]>([])
+  const [ipMode, setIpMode] = useState<IpFactoryMode>('screenplay')
+  const [ipOutput, setIpOutput] = useState('')
+  const [ipGenerating, setIpGenerating] = useState(false)
   const storageKey = `yixie-phase3-workspace-${work.id}`
   const promptRunStorageKey = `yixie-prompt-runs-v1-${work.id}`
-  const wordCount = work.chapterText.replace(/\s/g, '').length
+  const chapters = normalizeWorkspaceChapters(work)
+  const currentChapter = chapters.find((chapter) => chapter.id === selectedChapterId) ?? chapters[0]
+  const wordCount = currentChapter.content.replace(/\s/g, '').length
 
   useEffect(() => {
     setView(initialView)
   }, [initialView, work.id])
+
+  useEffect(() => {
+    setSelectedChapterId((current) => {
+      if (chapters.some((chapter) => chapter.id === current)) return current
+      return chapters[0]?.id || ''
+    })
+  }, [work.id, chapters])
 
   useEffect(() => {
     const raw = localStorage.getItem(storageKey)
@@ -235,26 +253,26 @@ export function WritingWorkspace({
     setWorkspaceStatus('loading')
     setWorkspaceMessage('正在从当前章节生成摘要...')
     window.setTimeout(() => {
-      const summary = localSummary(work.chapterText)
+      const summary = localSummary(currentChapter.content)
       const summaryLore: LoreEntry = {
         id: `lore-summary-${Date.now()}`,
-        title: `${work.chapterTitle} 摘要`,
+        title: `${currentChapter.title} 摘要`,
         type: 'chapter-summary',
         content: summary,
         tags: ['章节摘要', '自动生成'],
-        relatedChapterIds: ['chapter-1'],
+        relatedChapterIds: [currentChapter.id],
         updatedAt: '刚刚',
       }
       const memory: MemoryEntry = {
         id: `memory-summary-${Date.now()}`,
         type: 'chapter-summary',
-        title: `${work.chapterTitle} 摘要`,
+        title: `${currentChapter.title} 摘要`,
         content: summary,
-        sourceChapterId: 'chapter-1',
+        sourceChapterId: currentChapter.id,
         updatedAt: '刚刚',
         status: 'draft',
         confidence: 0.7,
-        sourceText: work.chapterText.slice(0, 240),
+        sourceText: currentChapter.content.slice(0, 240),
         createdBy: 'local',
         createdAt: '刚刚',
       }
@@ -317,8 +335,60 @@ export function WritingWorkspace({
   }
 
   function insertSuggestion(text: string) {
-    onContentChange(`${work.chapterText}\n\n【修改区】${text}`)
+    updateChapter({ content: `${currentChapter.content}\n\n【修改区】${text}` })
     flash('success', '建议已插入到正文末尾的修改区。')
+  }
+
+  function updateChapter(patch: Partial<WorkChapter>) {
+    const nextChapters = chapters.map((chapter) => {
+      if (chapter.id !== currentChapter.id) return chapter
+      const nextContent = typeof patch.content === 'string' ? patch.content : chapter.content
+      return {
+        ...chapter,
+        ...patch,
+        content: nextContent,
+        wordCount: nextContent.replace(/\s/g, '').length,
+        updatedAt: '刚刚',
+      }
+    })
+    onWorkChange(applyWorkspaceChapters(work, nextChapters))
+  }
+
+  function createChapter() {
+    const nextNumber = chapters.reduce((max, chapter) => Math.max(max, chapter.chapterNumber), 0) + 1
+    const nextChapter: WorkChapter = {
+      id: `chapter-${Date.now()}`,
+      chapterNumber: nextNumber,
+      title: `第 ${nextNumber} 章`,
+      content: '',
+      status: 'draft',
+      wordCount: 0,
+      createdAt: '刚刚',
+      updatedAt: '刚刚',
+    }
+    onWorkChange(applyWorkspaceChapters(work, [...chapters, nextChapter]))
+    setSelectedChapterId(nextChapter.id)
+    setView('editor')
+    flash('success', '新章节已创建，保存后会同步到作品库。')
+  }
+
+  function deleteChapter(id: string) {
+    if (chapters.length <= 1) {
+      flash('error', '至少保留一个章节。')
+      return
+    }
+    const target = chapters.find((chapter) => chapter.id === id)
+    if (!target || !window.confirm(`确认删除「${target.title}」吗？保存后后端章节也会同步删除。`)) return
+    const nextChapters = chapters.filter((chapter) => chapter.id !== id).map((chapter, index) => ({ ...chapter, chapterNumber: index + 1, updatedAt: '刚刚' }))
+    onWorkChange(applyWorkspaceChapters(work, nextChapters))
+    setSelectedChapterId(nextChapters[0]?.id || '')
+    flash('success', '章节已删除，保存后生效。')
+  }
+
+  function togglePublishChapter(id: string) {
+    const nextChapters = chapters.map((chapter) => chapter.id === id ? { ...chapter, status: chapter.status === 'published' ? 'draft' as const : 'published' as const, updatedAt: '刚刚' } : chapter)
+    onWorkChange(applyWorkspaceChapters(work, nextChapters))
+    flash('success', '章节发布状态已更新，保存后会同步。')
   }
 
   function openWebAi(target: 'check' | 'memory') {
@@ -361,6 +431,74 @@ export function WritingWorkspace({
     setPromptRuns((current) => [nextRecord, ...current].slice(0, 20))
   }
 
+  async function generateIpAsset(mode: IpFactoryMode) {
+    setIpMode(mode)
+    setIpGenerating(true)
+    setWorkspaceStatus('loading')
+    setWorkspaceMessage(mode === 'screenplay' ? '正在生成短剧脚本...' : '正在生成互动剧情游戏设定包...')
+
+    const request = {
+      workTitle: work.title,
+      chapterTitle: currentChapter.title,
+      chapterContent: currentChapter.content,
+      genre: work.type || work.materials.genre,
+      sellingPoint: work.sellingPoint || work.materials.sellingPoint,
+      summary: work.summary || work.materials.summary,
+      characters: uniqueText([...listText(work.protagonists), ...listText(work.mainCharacters), ...work.materials.characters]),
+      worldRules: listText(work.worldRules),
+      targetScene: currentChapter.title,
+      targetDuration: 90,
+    }
+
+    try {
+      const endpoint = mode === 'screenplay' ? 'screenplay-draft' : 'game-package'
+      const response = await fetch(`${backendApiBase}/api/workflow/ip/${endpoint}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(request),
+      })
+      if (!response.ok) throw new Error('后端暂不可用')
+      const result = await response.json()
+      const text = result?.data
+      if (!text) throw new Error('模型没有返回内容')
+      setIpOutput(String(text))
+      setView('ip')
+      flash('success', mode === 'screenplay' ? '短剧脚本已生成。' : '互动剧情游戏设定包已生成。')
+    } catch {
+      const fallback = mode === 'screenplay' ? buildLocalScreenplay(work, currentChapter) : buildLocalGamePackage(work, currentChapter)
+      setIpOutput(fallback)
+      setView('ip')
+      flash('success', mode === 'screenplay' ? '已生成本地短剧脚本草案。' : '已生成本地游戏设定包草案。')
+    } finally {
+      setIpGenerating(false)
+    }
+  }
+
+  function copyIpOutput() {
+    if (!ipOutput.trim()) {
+      flash('error', '还没有可复制的衍生成果。')
+      return
+    }
+    navigator.clipboard?.writeText(ipOutput)
+    flash('success', 'IP 衍生成果已复制。')
+  }
+
+  function downloadIpOutput() {
+    if (!ipOutput.trim()) {
+      flash('error', '还没有可导出的衍生成果。')
+      return
+    }
+    const extension = ipMode === 'game' ? 'json' : 'md'
+    const blob = new Blob([ipOutput], { type: ipMode === 'game' ? 'application/json;charset=utf-8' : 'text/markdown;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `${safeFileName(work.title)}-${ipMode === 'game' ? '互动剧情游戏设定包' : '短剧脚本'}.${extension}`
+    link.click()
+    URL.revokeObjectURL(url)
+    flash('success', '文件已导出到浏览器下载目录。')
+  }
+
   const combinedStatus = workspaceStatus !== 'idle' ? workspaceStatus : status
   const combinedMessage = workspaceMessage || message
 
@@ -373,7 +511,7 @@ export function WritingWorkspace({
             {work.title}
           </button>
           <div className="h-7 w-px bg-slate-200" />
-          <span className="text-sm font-medium">{work.chapterTitle}</span>
+          <span className="text-sm font-medium">{currentChapter.title}</span>
           <span className={cn('rounded-full px-3 py-1 text-xs font-medium', work.syncState === 'local-only' ? 'bg-amber-50 text-amber-700' : 'bg-emerald-50 text-emerald-700')}>
             {work.syncState === 'local-only' ? '本地保存 · 未同步' : '正式作品 · 已同步'}
           </span>
@@ -399,13 +537,25 @@ export function WritingWorkspace({
             <section className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
               <div className="flex items-center justify-between">
                 <h2 className="font-semibold">章节目录</h2>
-                <Plus className="h-4 w-4 text-slate-400" />
+                <button onClick={createChapter} className="rounded p-1 text-blue-600 hover:bg-blue-50" title="新建章节">
+                  <Plus className="h-4 w-4" />
+                </button>
               </div>
               <div className="mt-3 space-y-2 text-sm">
                 <SideButton active={view === 'overview'} icon={BookOpen} label="作品总览" onClick={() => setView('overview')} />
-                <SideButton active={view === 'editor'} icon={FileText} label={work.chapterTitle} onClick={() => setView('editor')} />
-                <SideButton icon={FileText} label="场景 1：开场" onClick={() => setView('editor')} />
-                <SideButton icon={FileText} label="场景 2：冲突" onClick={() => setView('editor')} />
+                {chapters.map((chapter) => (
+                  <ChapterNavItem
+                    key={chapter.id}
+                    chapter={chapter}
+                    active={view === 'editor' && chapter.id === currentChapter.id}
+                    onOpen={() => {
+                      setSelectedChapterId(chapter.id)
+                      setView('editor')
+                    }}
+                    onDelete={() => deleteChapter(chapter.id)}
+                    onTogglePublish={() => togglePublishChapter(chapter.id)}
+                  />
+                ))}
               </div>
             </section>
             <section className="flex-1 overflow-y-auto rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
@@ -450,7 +600,7 @@ export function WritingWorkspace({
                 onOpenChecks={() => setView('checks')}
               />
             )}
-            {view === 'editor' && <EditorView work={work} onContentChange={onContentChange} onGenerateSummary={generateChapterSummary} />}
+            {view === 'editor' && <EditorView chapter={currentChapter} onChapterChange={updateChapter} onGenerateSummary={generateChapterSummary} onTogglePublish={() => togglePublishChapter(currentChapter.id)} />}
             {view === 'lore' && (
               <LoreView
                 entries={filteredLore}
@@ -490,6 +640,19 @@ export function WritingWorkspace({
                 onOpenWebAi={() => openWebAi('check')}
               />
             )}
+            {view === 'ip' && (
+              <IpFactoryView
+                mode={ipMode}
+                output={ipOutput}
+                generating={ipGenerating}
+                work={work}
+                chapter={currentChapter}
+                onModeChange={setIpMode}
+                onGenerate={generateIpAsset}
+                onCopy={copyIpOutput}
+                onDownload={downloadIpOutput}
+              />
+            )}
           </section>
 
           <aside className="ml-4 rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
@@ -502,11 +665,13 @@ export function WritingWorkspace({
               <PilotTab active={view === 'lore'} icon={Database} label="资料" onClick={() => setView('lore')} />
               <PilotTab active={view === 'memory'} icon={Brain} label="记忆" onClick={() => setView('memory')} />
               <PilotTab active={view === 'checks'} icon={ShieldAlert} label="检查" onClick={() => setView('checks')} />
+              <PilotTab active={view === 'ip'} icon={Film} label="IP" onClick={() => setView('ip')} />
             </div>
             <div className="mt-5 space-y-3">
               <PilotCard title="当前下一步" text={work.materials.nextStep || '继续推进当前章节目标。'} action="应用到正文" onAction={() => insertSuggestion(work.materials.nextStep || '继续推进当前章节目标。')} />
               <PilotCard title="长篇记忆" text={`已记录 ${memoryEntries.length} 条记忆，未回收伏笔 ${memoryEntries.filter((entry) => entry.type === 'open-foreshadow').length} 条。`} action="生成章节摘要" onAction={generateChapterSummary} />
               <PilotCard title="OOC / 伏笔检查" text={openIssues.length ? `当前有 ${openIssues.length} 条待处理问题。` : '可从当前章节生成检查结果。'} action="开始检查" onAction={runLocalCheck} />
+              <PilotCard title="IP Factory" text="把当前章节转成竖屏短剧脚本，或生成互动剧情游戏设定包 JSON。" action="打开衍生工厂" onAction={() => setView('ip')} />
               <PilotCard title="外部生成" text="未配置接口时，可复制检查 Prompt 到常用模型网页，再粘贴结果回来解析。" action="生成检查 Prompt" onAction={() => openWebAi('check')} />
             </div>
           </aside>
@@ -837,6 +1002,13 @@ function normalizeWorkspaceWork(work: SavedWork): SavedWork {
     nextStep: '',
   }
 
+  const normalizedChapters = normalizeWorkspaceChapters({
+    ...work,
+    chapterTitle: work.chapterTitle || '未命名章节',
+    chapterText: work.chapterText || '',
+  } as SavedWork)
+  const firstChapter = normalizedChapters[0]
+
   return {
     ...work,
     title: work.title || '未命名作品',
@@ -844,7 +1016,7 @@ function normalizeWorkspaceWork(work: SavedWork): SavedWork {
     words: safeNumber(work.words),
     targetWords: safeNumber(work.targetWords),
     plannedChapters: safeNumber(work.plannedChapters),
-    chapterCount: safeNumber(work.chapterCount),
+    chapterCount: normalizedChapters.length || safeNumber(work.chapterCount),
     weeklyUpdateGoal: safeNumber(work.weeklyUpdateGoal),
     monthlyUpdatedChapters: safeNumber(work.monthlyUpdatedChapters),
     tags: Array.isArray(work.tags) ? work.tags : [],
@@ -854,8 +1026,9 @@ function normalizeWorkspaceWork(work: SavedWork): SavedWork {
     cover: work.cover || 'from-blue-700 via-violet-500 to-fuchsia-300',
     syncState: work.syncState ?? (work.status === 'local-draft' ? 'local-only' : 'pending'),
     updatedAt: work.updatedAt || '暂无记录',
-    chapterTitle: work.chapterTitle || '未命名章节',
-    chapterText: work.chapterText || '',
+    chapterTitle: firstChapter?.title || work.chapterTitle || '未命名章节',
+    chapterText: typeof firstChapter?.content === 'string' ? firstChapter.content : work.chapterText || '',
+    chapters: normalizedChapters,
     materials: {
       genre: materials.genre || work.type || '待整理',
       sellingPoint: materials.sellingPoint || work.sellingPoint || '',
@@ -866,21 +1039,101 @@ function normalizeWorkspaceWork(work: SavedWork): SavedWork {
   }
 }
 
-function EditorView({ work, onContentChange, onGenerateSummary }: { work: SavedWork; onContentChange: (content: string) => void; onGenerateSummary: () => void }) {
+function normalizeWorkspaceChapters(work: SavedWork): WorkChapter[] {
+  const rawChapters = Array.isArray(work.chapters) ? work.chapters : []
+  const normalized = rawChapters
+    .map((chapter, index) => normalizeWorkspaceChapter(chapter, index))
+    .sort((a, b) => a.chapterNumber - b.chapterNumber)
+
+  if (normalized.length > 0) {
+    return normalized.map((chapter, index) => ({
+      ...chapter,
+      chapterNumber: index + 1,
+    }))
+  }
+
+  return [normalizeWorkspaceChapter({
+    id: 'chapter-1',
+    chapterNumber: 1,
+    title: work.chapterTitle || '第一章：未命名章节',
+    content: work.chapterText || '',
+    status: 'draft',
+    wordCount: (work.chapterText || '').replace(/\s/g, '').length,
+  }, 0)]
+}
+
+function normalizeWorkspaceChapter(chapter: Partial<WorkChapter>, index: number): WorkChapter {
+  const content = typeof chapter.content === 'string' ? chapter.content : ''
+  return {
+    id: chapter.id || `chapter-${index + 1}`,
+    chapterNumber: typeof chapter.chapterNumber === 'number' && chapter.chapterNumber > 0 ? chapter.chapterNumber : index + 1,
+    title: chapter.title || `第 ${index + 1} 章`,
+    content,
+    status: chapter.status === 'published' ? 'published' : 'draft',
+    wordCount: typeof chapter.wordCount === 'number' ? chapter.wordCount : content.replace(/\s/g, '').length,
+    createdAt: chapter.createdAt,
+    updatedAt: chapter.updatedAt,
+  }
+}
+
+function applyWorkspaceChapters(work: SavedWork, chapters: WorkChapter[]): SavedWork {
+  const normalized = chapters.map((chapter, index) => normalizeWorkspaceChapter({ ...chapter, chapterNumber: index + 1 }, index))
+  const first = normalized[0]
+  return {
+    ...work,
+    chapters: normalized,
+    chapterTitle: first?.title || work.chapterTitle,
+    chapterText: first?.content ?? work.chapterText,
+    words: normalized.reduce((sum, chapter) => sum + chapter.content.replace(/\s/g, '').length, 0),
+    chapterCount: normalized.length,
+    monthlyUpdatedChapters: Math.max(work.monthlyUpdatedChapters || 0, normalized.filter((chapter) => chapter.status === 'published').length),
+    updatedAt: '刚刚',
+  }
+}
+
+function ChapterNavItem({ chapter, active, onOpen, onDelete, onTogglePublish }: { chapter: WorkChapter; active: boolean; onOpen: () => void; onDelete: () => void; onTogglePublish: () => void }) {
+  return (
+    <div className={cn('group rounded-md border px-2 py-2', active ? 'border-blue-200 bg-blue-50' : 'border-transparent hover:border-slate-200 hover:bg-slate-50')}>
+      <button onClick={onOpen} className="flex w-full items-center gap-2 text-left">
+        <FileText className={cn('h-4 w-4 shrink-0', active ? 'text-blue-600' : 'text-slate-400')} />
+        <span className="min-w-0 flex-1 truncate text-sm font-medium">{chapter.title}</span>
+        <span className={cn('rounded px-1.5 py-0.5 text-[10px]', chapter.status === 'published' ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500')}>
+          {chapter.status === 'published' ? '已发布' : '草稿'}
+        </span>
+      </button>
+      <div className="mt-2 flex items-center justify-between text-[11px] text-slate-400">
+        <span>第 {chapter.chapterNumber} 章 · {chapter.wordCount.toLocaleString()} 字</span>
+        <div className="flex items-center gap-1 opacity-0 transition group-hover:opacity-100">
+          <button onClick={onTogglePublish} className="rounded px-1.5 py-0.5 text-slate-500 hover:bg-white hover:text-emerald-600">
+            {chapter.status === 'published' ? '撤回' : '发布'}
+          </button>
+          <button onClick={onDelete} className="rounded p-0.5 text-slate-400 hover:bg-white hover:text-red-600" title="删除章节">
+            <Trash2 className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function EditorView({ chapter, onChapterChange, onGenerateSummary, onTogglePublish }: { chapter: WorkChapter; onChapterChange: (patch: Partial<WorkChapter>) => void; onGenerateSummary: () => void; onTogglePublish: () => void }) {
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex h-12 items-center gap-3 border-b border-slate-200 px-4 text-sm">
         <select className="rounded border border-slate-200 px-2 py-1 outline-none"><option>正文</option></select>
         <select className="rounded border border-slate-200 px-2 py-1 outline-none"><option>16</option></select>
         {['B', 'I', 'U', 'S'].map((item) => <button key={item} className="rounded px-2 py-1 font-semibold hover:bg-slate-100">{item}</button>)}
+        <button onClick={onTogglePublish} className={cn('rounded-md border px-3 py-1.5 font-semibold', chapter.status === 'published' ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-slate-200 text-slate-600 hover:bg-slate-50')}>
+          {chapter.status === 'published' ? '已发布' : '标记发布'}
+        </button>
         <button onClick={onGenerateSummary} className="ml-auto inline-flex items-center gap-2 rounded-md border border-blue-200 px-3 py-1.5 text-blue-600 hover:bg-blue-50">
           <Brain className="h-4 w-4" />
           生成章节摘要
         </button>
       </div>
       <div className="flex-1 overflow-y-auto px-14 py-10">
-        <input value={work.chapterTitle} readOnly className="mb-8 w-full bg-transparent text-3xl font-semibold outline-none" />
-        <textarea value={work.chapterText} onChange={(event) => onContentChange(event.target.value)} className="min-h-[520px] w-full resize-none bg-transparent text-[17px] leading-9 outline-none" />
+        <input value={chapter.title} onChange={(event) => onChapterChange({ title: event.target.value })} className="mb-8 w-full bg-transparent text-3xl font-semibold outline-none" />
+        <textarea value={chapter.content} onChange={(event) => onChapterChange({ content: event.target.value })} className="min-h-[520px] w-full resize-none bg-transparent text-[17px] leading-9 outline-none" />
       </div>
       <div className="border-t border-slate-200 p-4">
         <div className="flex items-center gap-3 rounded-md border border-blue-100 bg-blue-50/50 p-3">
@@ -1137,6 +1390,114 @@ function ChecksView({
   )
 }
 
+function IpFactoryView({
+  mode,
+  output,
+  generating,
+  work,
+  chapter,
+  onModeChange,
+  onGenerate,
+  onCopy,
+  onDownload,
+}: {
+  mode: IpFactoryMode
+  output: string
+  generating: boolean
+  work: SavedWork
+  chapter: WorkChapter
+  onModeChange: (mode: IpFactoryMode) => void
+  onGenerate: (mode: IpFactoryMode) => void
+  onCopy: () => void
+  onDownload: () => void
+}) {
+  const hasContent = Boolean(chapter.content.trim())
+  return (
+    <div className="h-full overflow-y-auto bg-slate-50/60 p-5">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h2 className="text-xl font-semibold">IP Factory</h2>
+          <p className="mt-1 text-sm text-slate-500">将当前章节衍生为短剧脚本或互动剧情游戏设定包。后端模型不可用时会生成本地结构化草案。</p>
+        </div>
+        <div className="flex gap-2">
+          <button onClick={onCopy} disabled={!output.trim()} className="inline-flex items-center gap-2 rounded-md border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50">
+            <Clipboard className="h-4 w-4" />
+            复制
+          </button>
+          <button onClick={onDownload} disabled={!output.trim()} className="inline-flex items-center gap-2 rounded-md border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50">
+            <Download className="h-4 w-4" />
+            导出
+          </button>
+        </div>
+      </div>
+
+      <div className="mt-5 grid gap-4 lg:grid-cols-2">
+        <IpModeCard
+          active={mode === 'screenplay'}
+          icon={Film}
+          title="小说转短剧脚本"
+          description="生成竖屏短剧结构，包含 3 秒钩子、场次、镜头、动作、台词与结尾悬念。"
+          action="生成短剧脚本"
+          disabled={!hasContent || generating}
+          onSelect={() => onModeChange('screenplay')}
+          onGenerate={() => onGenerate('screenplay')}
+        />
+        <IpModeCard
+          active={mode === 'game'}
+          icon={Gamepad2}
+          title="互动剧情游戏设定包"
+          description="生成可交给前端或游戏引擎继续实现的 JSON，包含玩法循环、角色、场景、任务和分支选择。"
+          action="生成游戏设定包"
+          disabled={!hasContent || generating}
+          onSelect={() => onModeChange('game')}
+          onGenerate={() => onGenerate('game')}
+        />
+      </div>
+
+      <section className="mt-5 rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h3 className="font-semibold">当前输入</h3>
+            <p className="mt-1 text-sm text-slate-500">{work.title} · {chapter.title} · {chapter.wordCount.toLocaleString()} 字</p>
+          </div>
+          {generating && <span className="inline-flex items-center gap-2 rounded-full bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-700"><Loader2 className="h-3.5 w-3.5 animate-spin" />生成中</span>}
+        </div>
+        {!hasContent && <div className="mt-4 rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">当前章节还没有正文，先写入章节内容再生成 IP 衍生资产。</div>}
+      </section>
+
+      <section className="mt-5 rounded-lg border border-slate-200 bg-white shadow-sm">
+        <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
+          <h3 className="font-semibold">{mode === 'screenplay' ? '短剧脚本结果' : '游戏设定包结果'}</h3>
+          <span className="rounded bg-slate-100 px-2 py-1 text-xs font-medium text-slate-500">{mode === 'screenplay' ? 'Markdown' : 'JSON'}</span>
+        </div>
+        <pre className="min-h-[360px] overflow-x-auto whitespace-pre-wrap p-5 text-sm leading-6 text-slate-700">
+          {output || '生成结果会显示在这里。'}
+        </pre>
+      </section>
+    </div>
+  )
+}
+
+function IpModeCard({ active, icon: Icon, title, description, action, disabled, onSelect, onGenerate }: { active: boolean; icon: LucideIcon; title: string; description: string; action: string; disabled: boolean; onSelect: () => void; onGenerate: () => void }) {
+  return (
+    <article onClick={onSelect} className={cn('cursor-pointer rounded-lg border bg-white p-4 shadow-sm transition', active ? 'border-blue-300 ring-2 ring-blue-100' : 'border-slate-200 hover:border-blue-200')}>
+      <div className="flex items-start gap-3">
+        <div className={cn('flex h-10 w-10 shrink-0 items-center justify-center rounded-md', active ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-500')}>
+          <Icon className="h-5 w-5" />
+        </div>
+        <div>
+          <h3 className="font-semibold text-slate-950">{title}</h3>
+          <p className="mt-1 text-sm leading-6 text-slate-500">{description}</p>
+        </div>
+      </div>
+      <button onClick={(event) => { event.stopPropagation(); onGenerate() }} disabled={disabled} className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-md bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-500 disabled:cursor-not-allowed disabled:bg-slate-300">
+        {disabled ? <Loader2 className="h-4 w-4" /> : <Sparkles className="h-4 w-4" />}
+        {action}
+      </button>
+    </article>
+  )
+}
+
 function WorkspaceWebAiModal({
   open,
   target,
@@ -1319,6 +1680,94 @@ function PilotCard({ title, text, action, onAction }: { title: string; text: str
       <button onClick={onAction} className="mt-3 w-full rounded-md border border-blue-300 bg-white px-3 py-2 text-sm font-semibold text-blue-600">{action}</button>
     </div>
   )
+}
+
+function buildLocalScreenplay(work: SavedWork, chapter: WorkChapter) {
+  const hook = chapter.content.replace(/\s+/g, '').slice(0, 80) || work.sellingPoint || work.summary || '主角遭遇无法回避的关键冲突。'
+  const conflict = work.coreConflict || work.sellingPoint || work.materials.sellingPoint || '围绕主角目标与阻碍展开强冲突。'
+  const protagonist = listText(work.protagonists)[0] || work.materials.characters[0] || '主角'
+  return [
+    `# ${work.title} · ${chapter.title} 短剧脚本`,
+    '',
+    '## 3 秒高能钩子',
+    `画面直接切入：${hook}`,
+    '',
+    '## 改编核心',
+    `- 核心冲突：${conflict}`,
+    `- 主视角人物：${protagonist}`,
+    '- 竖屏时长建议：60-90 秒',
+    '',
+    '## 分镜脚本',
+    '| 镜头 | 景别 | 画面 / 动作 | 台词 / 字幕 | 情绪目标 |',
+    '| --- | --- | --- | --- | --- |',
+    `| 1 | 近景 | ${protagonist} 被突发事件逼到选择前。 | “现在退，我就什么都没有了。” | 立刻制造压力 |`,
+    '| 2 | 中景 | 反方或阻碍出现，抛出不可接受的条件。 | “你没有资格拒绝。” | 强化压迫 |',
+    '| 3 | 特写 | 主角注意到一个反常细节，意识到局面有破绽。 | 字幕：机会只出现一瞬。 | 制造悬念 |',
+    '| 4 | 推近 | 主角反击，抛出反转信息。 | “你以为我什么都不知道？” | 爽点释放 |',
+    '| 5 | 定格 | 对方表情失控，新的危机浮出水面。 | 字幕：真正的幕后人出现了。 | 留下追更钩子 |',
+    '',
+    '## 拍摄提示',
+    '- 保持竖屏构图，人物脸部和关键道具不要离开中心区域。',
+    '- 每 8-12 秒给一次信息反转或情绪推进。',
+    '- 结尾保留一个未回答问题，用于下一集承接。',
+  ].join('\n')
+}
+
+function buildLocalGamePackage(work: SavedWork, chapter: WorkChapter) {
+  const characters = uniqueText([...listText(work.protagonists), ...listText(work.mainCharacters), ...work.materials.characters])
+  const packageDraft = {
+    title: `${work.title}：${chapter.title} 互动剧情游戏设定包`,
+    source: {
+      workTitle: work.title,
+      chapterTitle: chapter.title,
+      genre: work.type || work.materials.genre,
+      sellingPoint: work.sellingPoint || work.materials.sellingPoint,
+    },
+    gameType: '互动叙事 / AVG / 轻量剧情解谜',
+    coreLoop: ['阅读剧情片段', '识别关键线索', '做出分支选择', '改变人物关系或资源状态', '触发成功 / 失败反馈'],
+    playerGoal: work.coreConflict || work.materials.nextStep || '帮助主角在当前章节冲突中做出关键选择，并保留后续悬念。',
+    characters: (characters.length ? characters : ['主角']).slice(0, 5).map((name, index) => ({
+      id: `character_${index + 1}`,
+      name,
+      role: index === 0 ? 'player_protagonist' : 'supporting_or_opponent',
+      motivation: index === 0 ? '突破当前困境并接近真相' : '推动冲突或提供线索',
+      relationshipVariables: ['trust', 'pressure', 'secret'],
+    })),
+    scenes: [
+      {
+        id: 'scene_1',
+        name: chapter.title,
+        objective: '建立冲突、给出第一个关键选择',
+        sourceExcerpt: chapter.content.slice(0, 180),
+        interactiveObjects: ['异常线索', '关键道具', '对方话术破绽'],
+      },
+    ],
+    quests: [
+      {
+        id: 'quest_1',
+        title: '找出当前冲突的突破口',
+        successCondition: '玩家选择能保留主角主动权的行动',
+        failureCondition: '玩家忽略线索或过早妥协',
+      },
+    ],
+    branches: [
+      {
+        id: 'choice_1',
+        prompt: '面对压迫性条件，玩家如何回应？',
+        options: [
+          { id: 'a', text: '正面反击', effect: { pressure: 2, trust: -1 }, result: '进入高冲突路线，获得爽点反转机会。' },
+          { id: 'b', text: '暂时示弱并观察', effect: { secret: 2, pressure: -1 }, result: '进入线索收集路线，发现隐藏信息。' },
+          { id: 'c', text: '向盟友求助', effect: { trust: 2, pressure: 1 }, result: '进入关系路线，但可能暴露弱点。' },
+        ],
+      },
+    ],
+    exportNotes: ['该 JSON 是前端/引擎原型草案，可继续拆成节点图、Ink 脚本或 RenPy/AVG 剧本。'],
+  }
+  return JSON.stringify(packageDraft, null, 2)
+}
+
+function safeFileName(value: string) {
+  return (value || '未命名作品').replace(/[\\/:*?"<>|]/g, '-').slice(0, 48)
 }
 
 function StatCard({ label, value, tone }: { label: string; value: number; tone: 'red' | 'amber' | 'blue' | 'emerald' }) {
