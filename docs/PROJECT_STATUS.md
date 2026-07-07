@@ -1,5 +1,34 @@
 # NovelAI Copilot 项目状态
-更新时间：2026-07-06
+更新时间：2026-07-07
+
+## 2026-07-07 IP Factory 后端模型闭环 P1
+
+任务 ID：`NOVELAI-COPILOT-IP-FACTORY-BACKEND-P1`
+
+本轮把上次已接入写作工作台的 IP Factory 前端入口继续补齐为后端可调用模型的闭环。目标是先让“短剧脚本”和“互动剧情游戏设定包”可从当前章节直接生成，不依赖已经落库的 `novelId` / `chapterId`，以兼容当前前端作品快照和本地草稿。
+
+已完成：
+
+- 新增后端 `IpFactoryRequest`，接收作品标题、章节标题、章节正文、题材、卖点、简介、人物列表、世界规则、目标场景和目标时长。
+- 新增 `POST /api/workflow/ip/screenplay-draft`，基于前端传入的章节内容生成竖屏短剧脚本草案。
+- 新增 `POST /api/workflow/ip/game-package`，基于前端传入的章节内容生成互动剧情游戏设定包。
+- `WorkflowService` 新增 `generateScreenplayDraft` 和 `generateGamePackage`。
+- `WorkflowServiceImpl` 新增 IP Factory Prompt：
+  - 短剧脚本要求返回 Markdown，包含 3 秒高能钩子、分镜表格、台词、情绪目标和结尾钩子。
+  - 游戏设定包要求只返回合法 JSON，包含 `source`、`gameType`、`coreLoop`、`playerGoal`、`characters`、`scenes`、`quests`、`branches`、`failureStates`、`exportNotes`。
+- 前端仍保留本地 fallback：后端不可用或模型未配置时，可生成本地短剧 / 游戏 JSON 草案，避免功能空转。
+
+边界说明：
+
+- 当前不是完整 IP Factory 工作流编排；没有多资产版本管理、角色立绘、漫剧分镜、配音或视频合成。
+- 当前游戏生成是设定包 / 原型 JSON，不是可直接运行的游戏引擎项目。
+- 当前短剧接口是同步模型调用；旧 `/api/workflow/screenplay` 流式接口仍保留，后续可统一到前端流式展示。
+
+验证：
+
+- 已运行 `frontend` 下 `npx tsc --noEmit --pretty false`，通过。
+- 已运行 `frontend` 下 `npm run build`，通过。
+- 已使用 JDK 21 运行 `backend` 下 `mvn -DskipTests compile`，通过。
 
 ## 2026-07-06 多章节快照持久化 P0
 

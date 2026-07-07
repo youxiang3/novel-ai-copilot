@@ -307,7 +307,7 @@ function ProjectDashboard({
   }
 
   return (
-    <div className="min-h-full bg-[#f7f9fc]">
+    <div className="yixie-editorial min-h-full bg-[#edf1ee]">
       <div className="grid min-h-full grid-cols-[minmax(0,1fr)_360px] gap-5 p-6">
         <main className="min-w-0">
           {isGuest && (
@@ -423,38 +423,59 @@ function HomeWorksEntry({ works, isGuest, onNewWork, onOpenWebAi, onOpenWork }: 
   const enrichedWorks = works.map(normalizeWork)
   const localDrafts = enrichedWorks.filter((work) => work.status === 'local-draft')
   const officialWorks = enrichedWorks.filter((work) => work.status === 'official')
+  const recentWorks = enrichedWorks.slice(0, 3)
+  const totalWords = enrichedWorks.reduce((sum, work) => sum + work.words, 0)
+  const pendingSync = enrichedWorks.filter((work) => work.syncState === 'pending' || work.syncState === 'failed').length
 
   return (
-    <div className="p-8">
+    <div className="yixie-editorial min-h-full bg-[#edf1ee] p-8 text-slate-950">
       {isGuest && (
-        <div className="mb-6 flex items-center justify-between rounded-md border border-amber-200 bg-amber-50 px-5 py-3 text-sm text-amber-800">
+        <div className="mb-6 flex items-center justify-between rounded-md border border-[#d8e5e4] bg-white/72 px-5 py-3 text-sm text-slate-700 shadow-sm backdrop-blur">
           <span>当前为游客体验模式。临时草稿仅本地保存、不会同步到云端。</span>
-          <span className="font-semibold">仅本地保存</span>
+          <span className="rounded bg-[#e7f3f4] px-2 py-1 text-xs font-semibold text-[#2f7f86]">仅本地保存</span>
         </div>
       )}
-      <section className="flex items-end justify-between">
+      <section className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <h1 className="text-3xl font-semibold">你好，创作者</h1>
-          <p className="mt-2 text-slate-600">从新建作品开始，或继续你的本地临时草稿。</p>
+          <p className="text-sm font-semibold tracking-[0.10em] text-[#2f7f86]">STORY DESK</p>
+          <h1 className="mt-2 text-3xl font-semibold text-slate-950">今天让哪个故事继续呼吸？</h1>
+          <p className="mt-2 max-w-2xl leading-7 text-slate-600">最近章节、临时草稿、正式作品和衍生入口都在这里。先把文字写下来，再慢慢整理成世界。</p>
         </div>
-        <button onClick={onNewWork} className="inline-flex items-center gap-2 rounded-md bg-violet-600 px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-violet-500">
+        <button onClick={onNewWork} className="inline-flex items-center gap-2 rounded-md bg-slate-950 px-5 py-3 text-sm font-semibold text-white shadow-[0_14px_32px_rgba(15,23,42,0.14)] transition hover:bg-slate-800">
           <Plus className="h-4 w-4" />
           新建作品
         </button>
       </section>
 
-      <section className="mt-8">
-        <h2 className="text-lg font-semibold">新建作品</h2>
-        <div className="mt-4 grid grid-cols-3 gap-4">
-          <button onClick={onNewWork} className="flex min-h-[210px] flex-col items-center justify-center rounded-md border border-dashed border-violet-300 bg-white text-center transition hover:border-violet-500 hover:bg-violet-50">
-            <span className="flex h-14 w-14 items-center justify-center rounded-full bg-violet-100 text-violet-700">
-              <Plus className="h-7 w-7" />
-            </span>
-            <span className="mt-4 font-semibold">新建作品</span>
-            <span className="mt-1 text-sm text-slate-500">选择开书方式进入向导</span>
-          </button>
-          <ToolCard icon={Sparkles} title="Web AI Prompt" text="复制到网页 AI，生成后粘贴回填" onClick={onOpenWebAi} />
-          <ToolCard icon={Wand2} title="本地 fallback" text="未配置 API 时也可以先创建临时草稿" onClick={onNewWork} />
+      <section className="mt-8 grid gap-4 lg:grid-cols-[minmax(0,1.35fr)_minmax(320px,0.65fr)]">
+        <div className="rounded-lg border border-white/70 bg-white/72 p-5 shadow-sm backdrop-blur">
+          <div className="flex items-center justify-between">
+            <h2 className="font-semibold text-slate-950">最近作品</h2>
+            <span className="text-sm text-slate-500">{enrichedWorks.length} 个项目 · {formatWan(totalWords)} 字</span>
+          </div>
+          <div className="mt-4 divide-y divide-[#dce8e7]">
+            {recentWorks.map((work) => (
+              <button key={work.id} onClick={() => onOpenWork(work)} className="flex w-full items-center gap-4 rounded-md py-3 text-left transition hover:bg-[#f6fbfa]">
+                <span className={cn('h-10 w-10 rounded-md bg-gradient-to-br', work.cover)} />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm font-semibold text-slate-900">{work.title}</span>
+                  <span className="mt-1 block text-xs text-slate-500">{work.type} · {formatWan(work.words)} 字 · {work.updatedAt}</span>
+                </span>
+                <ChevronRight className="h-4 w-4 text-slate-400" />
+              </button>
+            ))}
+            {recentWorks.length === 0 && <div className="rounded-md border border-dashed border-[#cfe0df] bg-white/60 px-4 py-8 text-center text-sm text-slate-500">还没有作品。新建一个草稿，先把第一章落下来。</div>}
+          </div>
+        </div>
+
+        <div className="rounded-lg border border-white/70 bg-white/72 p-5 shadow-sm backdrop-blur">
+          <h2 className="font-semibold text-slate-950">下一步</h2>
+          <div className="mt-4 space-y-3">
+            <ToolCard icon={PenLine} title="开一个新坑" text="从题材、卖点和第一章开始" onClick={onNewWork} />
+            <ToolCard icon={Sparkles} title="整理外部生成结果" text="粘贴模型返回内容，确认后写入作品" onClick={onOpenWebAi} />
+            <ToolCard icon={Wand2} title="只写本地草稿" text="不配置模型，也能先写章节和资料" onClick={onNewWork} />
+          </div>
+          {pendingSync > 0 && <div className="mt-4 rounded-md border border-[#d7e6e4] bg-[#f6fbfa] px-3 py-2 text-xs text-[#2f7f86]">{pendingSync} 个作品需要稍后同步确认。</div>}
         </div>
       </section>
 
@@ -489,7 +510,7 @@ function ProjectCard({
   const isLocal = work.status === 'local-draft'
 
   return (
-    <article onClick={onSelect} className={cn('overflow-hidden rounded-md border bg-white shadow-sm transition hover:-translate-y-0.5 hover:shadow-md', selected ? 'border-violet-500 ring-2 ring-violet-100' : 'border-slate-200')}>
+    <article onClick={onSelect} className={cn('overflow-hidden rounded-md border bg-white/78 shadow-sm backdrop-blur transition hover:-translate-y-0.5 hover:shadow-md', selected ? 'border-[#2f7f86] ring-2 ring-[#d9eeee]' : 'border-white/70')}>
       <div className={cn('relative h-24 bg-gradient-to-br', work.cover)}>
         <span className={cn('absolute left-3 top-3 rounded px-2 py-1 text-xs font-semibold text-white', isLocal ? 'bg-amber-500' : statusBadgeClass(work.projectStatus))}>{projectStatusText[work.projectStatus!]}</span>
         <MoreMenu onAction={(focus) => onManage(focus)} onExport={onExport} onDuplicate={onDuplicate} onArchive={onArchive} onDelete={onDelete} />
@@ -499,7 +520,7 @@ function ProjectCard({
           <h3 className="truncate text-lg font-semibold text-slate-950">{work.title}</h3>
           <div className="mt-1 flex flex-wrap gap-1.5">
             <span className="rounded bg-slate-100 px-2 py-0.5 text-xs text-slate-600">{work.type}</span>
-            {(work.tags ?? []).slice(0, 2).map((tag) => <span key={tag} className="rounded bg-violet-50 px-2 py-0.5 text-xs text-violet-700">{tag}</span>)}
+            {(work.tags ?? []).slice(0, 2).map((tag) => <span key={tag} className="rounded bg-[#e7f3f4] px-2 py-0.5 text-xs text-[#2f7f86]">{tag}</span>)}
           </div>
         </div>
         <p className="mt-3 min-h-[48px] overflow-hidden text-sm leading-6 text-slate-600 [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:2]">{work.summary}</p>
@@ -517,7 +538,7 @@ function ProjectCard({
         {isLocal && <div className="mt-3 rounded-md bg-amber-50 px-3 py-2 text-xs font-medium text-amber-700">游客草稿 / 临时草稿仅本地保存</div>}
         <ToolChips tools={work.enabledTools ?? []} toolStates={work.toolStates ?? {}} />
         <div className="mt-4 grid grid-cols-[1fr_1fr_40px] gap-2">
-          <button onClick={(event) => { event.stopPropagation(); onOpen() }} className="rounded-md bg-violet-600 px-3 py-2 text-sm font-semibold text-white hover:bg-violet-500">{primaryActionText(work)}</button>
+          <button onClick={(event) => { event.stopPropagation(); onOpen() }} className="rounded-md bg-slate-950 px-3 py-2 text-sm font-semibold text-white hover:bg-slate-800">{primaryActionText(work)}</button>
           <button onClick={(event) => { event.stopPropagation(); onManage('general') }} className="rounded-md border border-slate-200 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">作品管理</button>
           <button onClick={(event) => { event.stopPropagation(); onManage('general') }} className="rounded-md border border-slate-200 p-2 text-slate-500 hover:bg-slate-50" aria-label="更多操作">
             <MoreVertical className="h-4 w-4" />
@@ -998,12 +1019,14 @@ function HomeWorkSection({ title, note, works, emptyText, onOpenWork }: { title:
 
 function ToolCard({ icon: Icon, title, text, onClick }: { icon: typeof Sparkles; title: string; text: string; onClick: () => void }) {
   return (
-    <button onClick={onClick} className="flex min-h-[210px] flex-col justify-center rounded-md border border-slate-200 bg-white p-5 text-left shadow-sm transition hover:border-violet-300 hover:bg-violet-50">
-      <span className="flex h-12 w-12 items-center justify-center rounded-md bg-violet-100 text-violet-700">
-        <Icon className="h-6 w-6" />
+    <button onClick={onClick} className="flex w-full items-start gap-3 rounded-md border border-slate-200 bg-white px-3 py-3 text-left transition hover:border-teal-200 hover:bg-teal-50/50">
+      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-slate-100 text-slate-700">
+        <Icon className="h-4 w-4" />
       </span>
-      <span className="mt-4 font-semibold">{title}</span>
-      <span className="mt-2 text-sm leading-6 text-slate-500">{text}</span>
+      <span className="min-w-0">
+        <span className="block text-sm font-semibold text-slate-900">{title}</span>
+        <span className="mt-1 block text-xs leading-5 text-slate-500">{text}</span>
+      </span>
     </button>
   )
 }

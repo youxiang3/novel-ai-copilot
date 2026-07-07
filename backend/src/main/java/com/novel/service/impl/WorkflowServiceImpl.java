@@ -109,6 +109,28 @@ public class WorkflowServiceImpl implements WorkflowService {
         return aiService.call(prompt);
     }
 
+    @Override
+    public String generateScreenplayDraft(String workTitle, String chapterTitle, String chapterContent, String genre,
+                                          String sellingPoint, String summary, List<String> characters,
+                                          List<String> worldRules, String targetScene, Integer targetDuration) {
+        validateChapterContent(chapterContent);
+        String prompt = buildIpScreenplayPrompt(workTitle, chapterTitle, chapterContent, genre, sellingPoint,
+                summary, characters, worldRules, targetScene, targetDuration);
+        log.info("[WorkflowService] IP Factory 短剧脚本草案: workTitle={}, chapterTitle={}", workTitle, chapterTitle);
+        return aiService.call(prompt);
+    }
+
+    @Override
+    public String generateGamePackage(String workTitle, String chapterTitle, String chapterContent, String genre,
+                                      String sellingPoint, String summary, List<String> characters,
+                                      List<String> worldRules) {
+        validateChapterContent(chapterContent);
+        String prompt = buildGamePackagePrompt(workTitle, chapterTitle, chapterContent, genre, sellingPoint,
+                summary, characters, worldRules);
+        log.info("[WorkflowService] IP Factory 互动剧情游戏设定包: workTitle={}, chapterTitle={}", workTitle, chapterTitle);
+        return aiService.call(prompt);
+    }
+
     private String buildScreenplayPrompt(Novel novel, Chapter chapter, String targetScene, Integer targetDuration) {
         StringBuilder sb = new StringBuilder();
         sb.append("【短剧脚本生成】\n\n");
@@ -134,6 +156,83 @@ public class WorkflowServiceImpl implements WorkflowService {
         sb.append("5. 结尾留有悬念或反转，吸引用户关注\n");
 
         return sb.toString();
+    }
+
+    private String buildIpScreenplayPrompt(String workTitle, String chapterTitle, String chapterContent, String genre,
+                                           String sellingPoint, String summary, List<String> characters,
+                                           List<String> worldRules, String targetScene, Integer targetDuration) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("【IP Factory：小说转竖屏短剧脚本】\n\n");
+        appendIpSource(sb, workTitle, chapterTitle, genre, sellingPoint, summary, characters, worldRules);
+        sb.append("【目标场景】\n");
+        sb.append(blankToDefault(targetScene, chapterTitle)).append("\n\n");
+        sb.append("【章节正文】\n");
+        sb.append(chapterContent).append("\n\n");
+        sb.append("【输出要求】\n");
+        sb.append("请输出 Markdown，不要输出解释性前言。\n");
+        sb.append("1. 先给出 3 秒高能钩子，必须保留原著核心冲突。\n");
+        sb.append("2. 建议总时长：").append(targetDuration != null && targetDuration > 0 ? targetDuration : 90).append(" 秒。\n");
+        sb.append("3. 使用表格输出分镜：镜头序号、景别、画面/动作、台词/字幕、情绪目标、拍摄提示。\n");
+        sb.append("4. 强化反转、悬念和短视频节奏，但不要改变人物底层动机。\n");
+        sb.append("5. 结尾必须留下下一集钩子。\n");
+        return sb.toString();
+    }
+
+    private String buildGamePackagePrompt(String workTitle, String chapterTitle, String chapterContent, String genre,
+                                          String sellingPoint, String summary, List<String> characters,
+                                          List<String> worldRules) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("【IP Factory：小说转互动剧情游戏设定包】\n\n");
+        appendIpSource(sb, workTitle, chapterTitle, genre, sellingPoint, summary, characters, worldRules);
+        sb.append("【章节正文】\n");
+        sb.append(chapterContent).append("\n\n");
+        sb.append("【输出要求】\n");
+        sb.append("只输出合法 JSON，不要使用 Markdown 代码块，不要输出解释性前言。\n");
+        sb.append("JSON 顶层字段必须包含：\n");
+        sb.append("- title: 字符串，游戏设定包标题\n");
+        sb.append("- source: 对象，包含 workTitle、chapterTitle、genre、sellingPoint\n");
+        sb.append("- gameType: 字符串，例如 文字冒险 / 互动叙事 / AVG / 剧情解谜 / 轻量 RPG\n");
+        sb.append("- coreLoop: 字符串数组，描述探索、选择、对话、事件触发、资源或好感度变化\n");
+        sb.append("- playerGoal: 字符串，玩家在本章节原型中的目标\n");
+        sb.append("- characters: 数组，每项包含 id、name、role、motivation、relationshipVariables\n");
+        sb.append("- scenes: 数组，每项包含 id、name、objective、sourceExcerpt、interactiveObjects\n");
+        sb.append("- quests: 数组，每项包含 id、title、successCondition、failureCondition\n");
+        sb.append("- branches: 数组，每项包含 id、prompt、options；options 每项包含 id、text、effect、result\n");
+        sb.append("- failureStates: 数组，描述失败反馈\n");
+        sb.append("- exportNotes: 字符串数组，说明如何交给前端或游戏引擎继续实现\n");
+        sb.append("请保留原著核心世界观、主角动机和关键冲突，并把章节冲突拆成可交互选择。\n");
+        return sb.toString();
+    }
+
+    private void appendIpSource(StringBuilder sb, String workTitle, String chapterTitle, String genre,
+                                String sellingPoint, String summary, List<String> characters, List<String> worldRules) {
+        sb.append("【作品信息】\n");
+        sb.append("作品标题：").append(blankToDefault(workTitle, "未命名作品")).append("\n");
+        sb.append("章节标题：").append(blankToDefault(chapterTitle, "当前章节")).append("\n");
+        sb.append("题材：").append(blankToDefault(genre, "未设置")).append("\n");
+        sb.append("一句话卖点：").append(blankToDefault(sellingPoint, "未设置")).append("\n");
+        sb.append("作品简介：").append(blankToDefault(summary, "未设置")).append("\n");
+        sb.append("主要人物：").append(joinOrDefault(characters, "未设置")).append("\n");
+        sb.append("世界规则：").append(joinOrDefault(worldRules, "未设置")).append("\n\n");
+    }
+
+    private void validateChapterContent(String chapterContent) {
+        if (chapterContent == null || chapterContent.isBlank()) {
+            throw new RuntimeException("章节正文不能为空");
+        }
+    }
+
+    private String blankToDefault(String value, String defaultValue) {
+        return value == null || value.isBlank() ? defaultValue : value.trim();
+    }
+
+    private String joinOrDefault(List<String> values, String defaultValue) {
+        if (values == null || values.isEmpty()) return defaultValue;
+        String joined = values.stream()
+                .filter(value -> value != null && !value.isBlank())
+                .map(String::trim)
+                .collect(Collectors.joining("、"));
+        return joined.isBlank() ? defaultValue : joined;
     }
 
     private String buildChapterPlanPrompt(Novel novel, List<Chapter> chapters, Integer startChapter, Integer endChapter) {

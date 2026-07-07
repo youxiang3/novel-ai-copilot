@@ -44,6 +44,7 @@ type WorkspaceView = 'overview' | 'editor' | 'lore' | 'memory' | 'checks' | 'ip'
 type IpFactoryMode = 'screenplay' | 'game'
 const backendApiBase = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8080'
 type PromptRunStatus = 'copied' | 'parsed'
+type ArtifactKind = 'summary' | 'check' | 'web-ai' | 'screenplay' | 'game'
 
 interface PromptRunRecord {
   id: string
@@ -53,6 +54,16 @@ interface PromptRunRecord {
   promptCharacters: number
   estimatedTokens: number
   resultCharacters: number
+}
+
+interface ArtifactRecord {
+  id: string
+  kind: ArtifactKind
+  title: string
+  content: string
+  createdAt: string
+  chapterTitle: string
+  source: 'local' | 'web-ai' | 'backend'
 }
 
 const loreTypeLabels: Record<LoreType, string> = {
@@ -149,11 +160,13 @@ export function WritingWorkspace({
   const [webAiTarget, setWebAiTarget] = useState<'check' | 'memory'>('check')
   const [webAiResult, setWebAiResult] = useState('')
   const [promptRuns, setPromptRuns] = useState<PromptRunRecord[]>([])
+  const [artifactRecords, setArtifactRecords] = useState<ArtifactRecord[]>([])
   const [ipMode, setIpMode] = useState<IpFactoryMode>('screenplay')
   const [ipOutput, setIpOutput] = useState('')
   const [ipGenerating, setIpGenerating] = useState(false)
   const storageKey = `yixie-phase3-workspace-${work.id}`
   const promptRunStorageKey = `yixie-prompt-runs-v1-${work.id}`
+  const artifactStorageKey = `yixie-artifact-runs-v1-${work.id}`
   const chapters = normalizeWorkspaceChapters(work)
   const currentChapter = chapters.find((chapter) => chapter.id === selectedChapterId) ?? chapters[0]
   const wordCount = currentChapter.content.replace(/\s/g, '').length
@@ -199,6 +212,20 @@ export function WritingWorkspace({
   useEffect(() => {
     localStorage.setItem(promptRunStorageKey, JSON.stringify(promptRuns.slice(0, 20)))
   }, [promptRunStorageKey, promptRuns])
+
+  useEffect(() => {
+    try {
+      const parsed = JSON.parse(localStorage.getItem(artifactStorageKey) || '[]')
+      setArtifactRecords(Array.isArray(parsed) ? parsed.slice(0, 30) : [])
+    } catch {
+      setArtifactRecords([])
+      localStorage.removeItem(artifactStorageKey)
+    }
+  }, [artifactStorageKey])
+
+  useEffect(() => {
+    localStorage.setItem(artifactStorageKey, JSON.stringify(artifactRecords.slice(0, 30)))
+  }, [artifactRecords, artifactStorageKey])
 
   const selectedLore = loreEntries.find((entry) => entry.id === selectedLoreId) ?? loreEntries[0]
   const filteredLore = loreEntries.filter((entry) => {
@@ -254,6 +281,7 @@ export function WritingWorkspace({
     setWorkspaceMessage('正在从当前章节生成摘要...')
     window.setTimeout(() => {
       const summary = localSummary(currentChapter.content)
+      recordArtifact('summary', `${currentChapter.title} 摘要`, summary, 'local')
       const summaryLore: LoreEntry = {
         id: `lore-summary-${Date.now()}`,
         title: `${currentChapter.title} 摘要`,
@@ -319,7 +347,9 @@ export function WritingWorkspace({
     setWorkspaceStatus('loading')
     setWorkspaceMessage('正在执行本地 OOC / 伏笔检查...')
     window.setTimeout(() => {
-      setCheckIssues(localCheck(work, loreEntries, memoryEntries))
+      const issues = localCheck(work, loreEntries, memoryEntries)
+      setCheckIssues(issues)
+      recordArtifact('check', `${currentChapter.title} 本地检查`, issues.map((issue) => `${severityLabels[issue.severity]}｜${issueTypeLabels[issue.issueType]}\n${issue.description}\n建议：${issue.suggestion}`).join('\n\n'), 'local')
       setView('checks')
       flash('success', '检查完成，结果已生成。')
     }, 650)
@@ -405,11 +435,13 @@ export function WritingWorkspace({
     if (webAiTarget === 'check') {
       const parsedIssues = parseCheckIssues(webAiResult)
       setCheckIssues((current) => [...parsedIssues, ...current])
+      recordArtifact('web-ai', 'Web AI 检查结果', webAiResult, 'web-ai')
       setView('checks')
       flash('success', '网页 AI 检查结果已解析为卡片。')
     } else {
       const parsedMemories = parseMemoryEntries(webAiResult)
       setMemoryEntries((current) => [...parsedMemories, ...current])
+      recordArtifact('web-ai', 'Web AI 记忆结果', webAiResult, 'web-ai')
       setView('memory')
       flash('success', '网页 AI 返回内容已解析为记忆条目。')
     }
@@ -462,11 +494,13 @@ export function WritingWorkspace({
       const text = result?.data
       if (!text) throw new Error('模型没有返回内容')
       setIpOutput(String(text))
+      recordArtifact(mode === 'screenplay' ? 'screenplay' : 'game', mode === 'screenplay' ? `${currentChapter.title} 短剧脚本` : `${currentChapter.title} 游戏设定包`, String(text), 'backend')
       setView('ip')
       flash('success', mode === 'screenplay' ? '短剧脚本已生成。' : '互动剧情游戏设定包已生成。')
     } catch {
       const fallback = mode === 'screenplay' ? buildLocalScreenplay(work, currentChapter) : buildLocalGamePackage(work, currentChapter)
       setIpOutput(fallback)
+      recordArtifact(mode === 'screenplay' ? 'screenplay' : 'game', mode === 'screenplay' ? `${currentChapter.title} 短剧脚本` : `${currentChapter.title} 游戏设定包`, fallback, 'local')
       setView('ip')
       flash('success', mode === 'screenplay' ? '已生成本地短剧脚本草案。' : '已生成本地游戏设定包草案。')
     } finally {
@@ -499,18 +533,57 @@ export function WritingWorkspace({
     flash('success', '文件已导出到浏览器下载目录。')
   }
 
+  function recordArtifact(kind: ArtifactKind, title: string, content: string, source: ArtifactRecord['source']) {
+    if (!content.trim()) return
+    const nextRecord: ArtifactRecord = {
+      id: `artifact-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      kind,
+      title,
+      content,
+      createdAt: new Date().toLocaleString(),
+      chapterTitle: currentChapter.title,
+      source,
+    }
+    setArtifactRecords((current) => [nextRecord, ...current].slice(0, 30))
+  }
+
+  function copyArtifact(record: ArtifactRecord) {
+    navigator.clipboard?.writeText(record.content)
+    flash('success', '生成结果已复制。')
+  }
+
+  function insertArtifact(record: ArtifactRecord) {
+    if (record.kind === 'game') {
+      flash('error', '游戏设定包更适合复制或导出，不建议直接插入正文。')
+      return
+    }
+    insertSuggestion(record.content)
+  }
+
+  function downloadArtifact(record: ArtifactRecord) {
+    const extension = record.kind === 'game' ? 'json' : 'md'
+    const blob = new Blob([record.content], { type: record.kind === 'game' ? 'application/json;charset=utf-8' : 'text/markdown;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `${safeFileName(work.title)}-${safeFileName(record.title)}.${extension}`
+    link.click()
+    URL.revokeObjectURL(url)
+    flash('success', '生成结果已导出。')
+  }
+
   const combinedStatus = workspaceStatus !== 'idle' ? workspaceStatus : status
   const combinedMessage = workspaceMessage || message
 
   return (
-    <main className="min-h-[calc(100vh-5rem)] bg-[#f6f9ff] p-4 text-slate-950">
-      <div className="mx-auto min-h-[calc(100vh-7rem)] max-w-[1500px] overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
-        <header className="flex h-[68px] items-center gap-5 border-b border-slate-200 px-6">
-          <button onClick={onBackHome} className="flex items-center gap-2 text-sm font-semibold text-blue-700">
+    <main className="yixie-editorial min-h-[calc(100vh-5rem)] bg-[#edf1ee] p-4 text-slate-950">
+      <div className="mx-auto min-h-[calc(100vh-7rem)] max-w-[1540px] overflow-hidden rounded-lg border border-white/70 bg-white/72 shadow-[0_24px_80px_rgba(15,23,42,0.10)] backdrop-blur">
+        <header className="flex h-[68px] items-center gap-5 border-b border-[#d8e5e4] bg-white/62 px-6">
+          <button onClick={onBackHome} className="flex items-center gap-2 text-sm font-semibold text-[#2f7f86]">
             <BookOpen className="h-5 w-5" />
             {work.title}
           </button>
-          <div className="h-7 w-px bg-slate-200" />
+          <div className="h-7 w-px bg-[#d8e5e4]" />
           <span className="text-sm font-medium">{currentChapter.title}</span>
           <span className={cn('rounded-full px-3 py-1 text-xs font-medium', work.syncState === 'local-only' ? 'bg-amber-50 text-amber-700' : 'bg-emerald-50 text-emerald-700')}>
             {work.syncState === 'local-only' ? '本地保存 · 未同步' : '正式作品 · 已同步'}
@@ -518,7 +591,7 @@ export function WritingWorkspace({
           <div className="ml-auto flex items-center gap-3 text-sm text-slate-500">
             <span>字数：{wordCount.toLocaleString()} 字</span>
             <span className="flex items-center gap-1"><CheckCircle2 className="h-4 w-4 text-emerald-500" /> 自动保存预览</span>
-            <button onClick={onSave} className="inline-flex items-center gap-2 rounded-md bg-blue-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-blue-500">
+            <button onClick={onSave} className="inline-flex items-center gap-2 rounded-md bg-slate-950 px-5 py-2.5 text-sm font-semibold text-white hover:bg-slate-800">
               <Save className="h-4 w-4" />
               保存
             </button>
@@ -532,12 +605,12 @@ export function WritingWorkspace({
           </div>
         )}
 
-        <div className="grid h-[calc(100vh-10rem)] min-h-[680px] grid-cols-[270px_minmax(0,1fr)_320px] gap-0 p-4">
+        <div className="grid h-[calc(100vh-10rem)] min-h-[680px] grid-cols-[270px_minmax(0,1fr)_310px] gap-0 p-4">
           <aside className="mr-4 flex min-h-0 flex-col gap-4">
-            <section className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+            <section className="rounded-lg border border-white/70 bg-white/72 p-4 shadow-sm backdrop-blur">
               <div className="flex items-center justify-between">
                 <h2 className="font-semibold">章节目录</h2>
-                <button onClick={createChapter} className="rounded p-1 text-blue-600 hover:bg-blue-50" title="新建章节">
+                <button onClick={createChapter} className="rounded p-1 text-[#2f7f86] hover:bg-[#e7f3f4]" title="新建章节">
                   <Plus className="h-4 w-4" />
                 </button>
               </div>
@@ -558,10 +631,10 @@ export function WritingWorkspace({
                 ))}
               </div>
             </section>
-            <section className="flex-1 overflow-y-auto rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+            <section className="flex-1 overflow-y-auto rounded-lg border border-white/70 bg-white/72 p-4 shadow-sm backdrop-blur">
               <div className="flex items-center justify-between">
                 <h2 className="font-semibold">资料与记忆入口</h2>
-                <button onClick={() => setView('lore')} className="rounded p-1 text-blue-600 hover:bg-blue-50">
+                <button onClick={() => setView('lore')} className="rounded p-1 text-[#2f7f86] hover:bg-[#e7f3f4]">
                   <Plus className="h-4 w-4" />
                 </button>
               </div>
@@ -587,7 +660,7 @@ export function WritingWorkspace({
             </section>
           </aside>
 
-          <section className="min-w-0 rounded-lg border border-slate-200 bg-white shadow-sm">
+          <section className="min-w-0 rounded-lg border border-white/70 bg-white/82 shadow-sm backdrop-blur">
             {view === 'overview' && (
               <OverviewView
                 work={work}
@@ -655,25 +728,29 @@ export function WritingWorkspace({
             )}
           </section>
 
-          <aside className="ml-4 rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+          <aside className="ml-4 rounded-lg border border-white/70 bg-[#f6fbfa]/82 p-4 shadow-sm backdrop-blur">
             <div className="flex items-center justify-between">
-              <h2 className="flex items-center gap-2 font-semibold"><MessageSquare className="h-5 w-5 text-slate-600" />写作助手</h2>
-              <span className="rounded-full bg-slate-100 px-2 py-1 text-xs font-medium text-slate-600">外部生成兼容</span>
+              <h2 className="flex items-center gap-2 font-semibold"><MessageSquare className="h-5 w-5 text-[#2f7f86]" />创作任务</h2>
+              <span className="rounded bg-white px-2 py-1 text-xs font-medium text-slate-500">当前章</span>
             </div>
-            <div className="mt-4 grid grid-cols-2 gap-2">
+            <div className="mt-4 grid grid-cols-3 gap-2">
               <PilotTab active={view === 'editor'} icon={PenLine} label="续写" onClick={() => setView('editor')} />
               <PilotTab active={view === 'lore'} icon={Database} label="资料" onClick={() => setView('lore')} />
               <PilotTab active={view === 'memory'} icon={Brain} label="记忆" onClick={() => setView('memory')} />
               <PilotTab active={view === 'checks'} icon={ShieldAlert} label="检查" onClick={() => setView('checks')} />
               <PilotTab active={view === 'ip'} icon={Film} label="IP" onClick={() => setView('ip')} />
             </div>
-            <div className="mt-5 space-y-3">
-              <PilotCard title="当前下一步" text={work.materials.nextStep || '继续推进当前章节目标。'} action="应用到正文" onAction={() => insertSuggestion(work.materials.nextStep || '继续推进当前章节目标。')} />
-              <PilotCard title="长篇记忆" text={`已记录 ${memoryEntries.length} 条记忆，未回收伏笔 ${memoryEntries.filter((entry) => entry.type === 'open-foreshadow').length} 条。`} action="生成章节摘要" onAction={generateChapterSummary} />
-              <PilotCard title="OOC / 伏笔检查" text={openIssues.length ? `当前有 ${openIssues.length} 条待处理问题。` : '可从当前章节生成检查结果。'} action="开始检查" onAction={runLocalCheck} />
-              <PilotCard title="IP Factory" text="把当前章节转成竖屏短剧脚本，或生成互动剧情游戏设定包 JSON。" action="打开衍生工厂" onAction={() => setView('ip')} />
-              <PilotCard title="外部生成" text="未配置接口时，可复制检查 Prompt 到常用模型网页，再粘贴结果回来解析。" action="生成检查 Prompt" onAction={() => openWebAi('check')} />
+            <div className="mt-5 rounded-md border border-[#d8e5e4] bg-white/78 p-3">
+              <div className="text-xs font-medium text-slate-500">下一步</div>
+              <p className="mt-2 text-sm leading-6 text-slate-700">{work.materials.nextStep || '继续推进当前章节目标。'}</p>
+              <button onClick={() => insertSuggestion(work.materials.nextStep || '继续推进当前章节目标。')} className="mt-3 text-sm font-semibold text-teal-700 hover:text-teal-800">插入到正文</button>
             </div>
+            <div className="mt-4 space-y-2">
+              <PilotCard title="生成章节摘要" text={`${memoryEntries.length} 条记忆，${memoryEntries.filter((entry) => entry.type === 'open-foreshadow').length} 条伏笔`} action="生成" onAction={generateChapterSummary} />
+              <PilotCard title="检查人物与伏笔" text={openIssues.length ? `${openIssues.length} 条待处理` : '本地规则检查'} action="检查" onAction={runLocalCheck} />
+              <PilotCard title="章节衍生" text="短剧 / 互动剧情游戏设定包" action="打开" onAction={() => setView('ip')} />
+            </div>
+            <ArtifactRunList records={artifactRecords} onCopy={copyArtifact} onInsert={insertArtifact} onDownload={downloadArtifact} />
           </aside>
         </div>
       </div>
@@ -1498,6 +1575,51 @@ function IpModeCard({ active, icon: Icon, title, description, action, disabled, 
   )
 }
 
+function ArtifactRunList({ records, onCopy, onInsert, onDownload }: { records: ArtifactRecord[]; onCopy: (record: ArtifactRecord) => void; onInsert: (record: ArtifactRecord) => void; onDownload: (record: ArtifactRecord) => void }) {
+  const visibleRecords = records.slice(0, 5)
+  const labels: Record<ArtifactKind, string> = {
+    summary: '摘要',
+    check: '检查',
+    'web-ai': 'Web AI',
+    screenplay: '短剧',
+    game: '游戏',
+  }
+
+  return (
+    <section className="mt-5 rounded-md border border-[#d8e5e4] bg-white/78 p-3">
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-semibold text-slate-900">生成记录</h3>
+        <span className="text-[11px] text-slate-400">仅本地保存</span>
+      </div>
+      <div className="mt-3 space-y-2">
+        {visibleRecords.map((record) => (
+          <article key={record.id} className="rounded-md border border-[#d8e5e4] bg-[#f8fbfa] px-3 py-2">
+            <div className="flex items-start justify-between gap-2">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className="rounded bg-[#e5f2f2] px-1.5 py-0.5 text-[10px] font-semibold text-[#2f7f86]">{labels[record.kind]}</span>
+                  <p className="truncate text-xs font-semibold text-slate-900">{record.title}</p>
+                </div>
+                <p className="mt-1 truncate text-[11px] text-slate-500">{record.chapterTitle} · {record.createdAt}</p>
+              </div>
+            </div>
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              <button onClick={() => onCopy(record)} className="inline-flex items-center gap-1 rounded border border-[#cfe0df] bg-white px-2 py-1 text-[11px] font-semibold text-slate-600 hover:border-[#2f7f86] hover:text-[#2f7f86]"><Clipboard className="h-3 w-3" />复制</button>
+              <button onClick={() => onDownload(record)} className="inline-flex items-center gap-1 rounded border border-[#cfe0df] bg-white px-2 py-1 text-[11px] font-semibold text-slate-600 hover:border-[#2f7f86] hover:text-[#2f7f86]"><Download className="h-3 w-3" />导出</button>
+              <button onClick={() => onInsert(record)} disabled={record.kind === 'game'} className="inline-flex items-center gap-1 rounded border border-[#cfe0df] bg-white px-2 py-1 text-[11px] font-semibold text-slate-600 hover:border-[#2f7f86] hover:text-[#2f7f86] disabled:cursor-not-allowed disabled:opacity-40"><PenLine className="h-3 w-3" />插入</button>
+            </div>
+          </article>
+        ))}
+        {!visibleRecords.length && (
+          <div className="rounded-md border border-dashed border-[#cfe0df] px-3 py-4 text-center text-xs text-slate-400">
+            生成摘要、检查或 IP 衍生后，会在这里保留可复制、导出的本地记录。
+          </div>
+        )}
+      </div>
+    </section>
+  )
+}
+
 function WorkspaceWebAiModal({
   open,
   target,
@@ -1665,7 +1787,7 @@ function SideButton({ icon: Icon, label, count, active = false, onClick }: { ico
 
 function PilotTab({ icon: Icon, label, active, onClick }: { icon: LucideIcon; label: string; active: boolean; onClick: () => void }) {
   return (
-    <button onClick={onClick} className={cn('inline-flex items-center justify-center gap-2 rounded-md border px-3 py-2 text-sm font-medium', active ? 'border-blue-300 bg-blue-50 text-blue-700' : 'border-slate-200 hover:bg-slate-50')}>
+    <button onClick={onClick} className={cn('inline-flex items-center justify-center gap-1.5 rounded-md border px-2 py-2 text-xs font-medium', active ? 'border-teal-300 bg-teal-50 text-teal-800' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50')}>
       <Icon className="h-4 w-4" />
       {label}
     </button>
@@ -1674,10 +1796,12 @@ function PilotTab({ icon: Icon, label, active, onClick }: { icon: LucideIcon; la
 
 function PilotCard({ title, text, action, onAction }: { title: string; text: string; action: string; onAction: () => void }) {
   return (
-    <div className="rounded-md border border-slate-200 bg-slate-50 p-4">
-      <div className="text-sm font-semibold text-blue-700">{title}</div>
-      <p className="mt-2 text-sm leading-6 text-slate-600">{text}</p>
-      <button onClick={onAction} className="mt-3 w-full rounded-md border border-blue-300 bg-white px-3 py-2 text-sm font-semibold text-blue-600">{action}</button>
+    <div className="flex items-center gap-3 rounded-md border border-slate-200 bg-white px-3 py-3">
+      <div className="min-w-0 flex-1">
+        <div className="truncate text-sm font-semibold text-slate-900">{title}</div>
+        <p className="mt-1 truncate text-xs text-slate-500">{text}</p>
+      </div>
+      <button onClick={onAction} className="shrink-0 rounded-md border border-slate-200 px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50">{action}</button>
     </div>
   )
 }

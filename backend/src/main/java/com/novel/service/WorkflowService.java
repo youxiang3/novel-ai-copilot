@@ -11,4 +11,12 @@ public interface WorkflowService {
     String analyzeChapter(Long novelId, Long chapterId, String analysisType);
 
     String editorInChiefReview(Long novelId, Long chapterId);
+
+    String generateScreenplayDraft(String workTitle, String chapterTitle, String chapterContent, String genre,
+                                   String sellingPoint, String summary, java.util.List<String> characters,
+                                   java.util.List<String> worldRules, String targetScene, Integer targetDuration);
+
+    String generateGamePackage(String workTitle, String chapterTitle, String chapterContent, String genre,
+                               String sellingPoint, String summary, java.util.List<String> characters,
+                               java.util.List<String> worldRules);
 }

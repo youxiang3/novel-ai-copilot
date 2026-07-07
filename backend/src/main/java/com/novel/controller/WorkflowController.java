@@ -3,6 +3,7 @@ package com.novel.controller;
 import com.novel.common.Result;
 import com.novel.dto.AnalysisRequest;
 import com.novel.dto.ChapterPlanRequest;
+import com.novel.dto.IpFactoryRequest;
 import com.novel.dto.ScreenplayRequest;
 import com.novel.service.WorkflowService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -60,6 +61,40 @@ public class WorkflowController {
     public Result<String> editorInChiefReview(@RequestParam UUID novelId, @RequestParam UUID chapterId) {
         String review = workflowService.editorInChiefReview(toLong(novelId), toLong(chapterId));
         return Result.success(review);
+    }
+
+    @PostMapping("/ip/screenplay-draft")
+    @Operation(summary = "IP Factory 短剧脚本草案", description = "基于前端传入的当前作品和章节内容生成竖屏短剧脚本")
+    public Result<String> generateScreenplayDraft(@RequestBody IpFactoryRequest request) {
+        String screenplay = workflowService.generateScreenplayDraft(
+                request.getWorkTitle(),
+                request.getChapterTitle(),
+                request.getChapterContent(),
+                request.getGenre(),
+                request.getSellingPoint(),
+                request.getSummary(),
+                request.getCharacters(),
+                request.getWorldRules(),
+                request.getTargetScene(),
+                request.getTargetDuration()
+        );
+        return Result.success(screenplay);
+    }
+
+    @PostMapping("/ip/game-package")
+    @Operation(summary = "IP Factory 互动剧情游戏设定包", description = "基于前端传入的当前作品和章节内容生成结构化互动剧情游戏 JSON 草案")
+    public Result<String> generateGamePackage(@RequestBody IpFactoryRequest request) {
+        String gamePackage = workflowService.generateGamePackage(
+                request.getWorkTitle(),
+                request.getChapterTitle(),
+                request.getChapterContent(),
+                request.getGenre(),
+                request.getSellingPoint(),
+                request.getSummary(),
+                request.getCharacters(),
+                request.getWorldRules()
+        );
+        return Result.success(gamePackage);
     }
 
     private Long toLong(UUID uuid) {
