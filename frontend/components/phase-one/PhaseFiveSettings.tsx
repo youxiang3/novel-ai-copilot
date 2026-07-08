@@ -185,7 +185,7 @@ export function ModelSettingsPage({ token = '', isGuest = true, onRequireLogin }
   }
 
   return (
-    <div className="grid min-h-[calc(100vh-5rem)] grid-cols-[minmax(0,1fr)_300px] gap-6 p-8">
+    <div className="yixie-editorial grid min-h-[calc(100vh-5rem)] grid-cols-[minmax(0,1fr)_300px] gap-6 bg-[#edf1ee] p-8">
       <section className="min-w-0">
         <h1 className="text-3xl font-semibold">模型设置</h1>
         <p className="mt-2 text-slate-600">配置 AI 生成方式与模型路由策略，系统会按规则选择最合适的生成方式。</p>
@@ -314,7 +314,7 @@ export function AppearanceSettingsPage() {
   }
 
   return (
-    <div className="grid min-h-[calc(100vh-5rem)] grid-cols-[minmax(0,1fr)_520px] gap-6 p-8">
+    <div className="yixie-editorial grid min-h-[calc(100vh-5rem)] grid-cols-[minmax(0,1fr)_520px] gap-6 bg-[#edf1ee] p-8">
       <section className="min-w-0 space-y-5">
         <div>
           <h1 className="text-3xl font-semibold">外观与写作偏好设置</h1>
@@ -403,7 +403,19 @@ export function AppearanceSettingsPage() {
   )
 }
 
-export function ExportCenterPage({ work, isGuest, onRequireLogin }: { work: SavedWork | null; isGuest: boolean; onRequireLogin: () => void }) {
+export function ExportCenterPage({
+  work,
+  token = '',
+  isGuest,
+  onRequireLogin,
+  onRestoreWork,
+}: {
+  work: SavedWork | null
+  token?: string
+  isGuest: boolean
+  onRequireLogin: () => void
+  onRestoreWork?: (work: SavedWork) => void
+}) {
   const [tab, setTab] = useState<'export' | 'backup' | 'publish'>('export')
   const [format, setFormat] = useState<ExportFormat>('txt')
   const [scope, setScope] = useState<ExportScope>('current')
@@ -415,6 +427,8 @@ export function ExportCenterPage({ work, isGuest, onRequireLogin }: { work: Save
   const [status, setStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle')
   const [message, setMessage] = useState('')
   const [backupRecords, setBackupRecords] = useState<string[]>([])
+  const [cloudSnapshots, setCloudSnapshots] = useState<CloudWorkSnapshot[]>([])
+  const [publishDraft, setPublishDraft] = useState('')
   const fileInputRef = useRef<HTMLInputElement>(null)
   const exportWork = work
 
@@ -465,6 +479,10 @@ export function ExportCenterPage({ work, isGuest, onRequireLogin }: { work: Save
   }
 
   function downloadBackup() {
+    if (!exportWork) {
+      flash('error', '请先新建或打开一个作品，再下载本地备份。')
+      return
+    }
     const payload = {
       version: 'yixie-backup-v1',
       exportedAt: new Date().toISOString(),
@@ -487,22 +505,145 @@ export function ExportCenterPage({ work, isGuest, onRequireLogin }: { work: Save
     const reader = new FileReader()
     reader.onload = () => {
       try {
-        JSON.parse(String(reader.result))
-        flash('success', '备份文件已读取。当前 MVP 先完成校验与提示，后续可接入恢复写入。')
+        const imported = parseImportedBackup(String(reader.result))
+        if (!imported) {
+          flash('error', '导入失败：没有找到可恢复的作品数据。')
+          return
+        }
+        if (!onRestoreWork) {
+          flash('error', '导入失败：当前页面没有接入作品恢复入口。')
+          return
+        }
+        onRestoreWork(imported)
+        const next = [`导入恢复：${imported.title} · ${new Date().toLocaleString()}`, ...backupRecords].slice(0, 6)
+        setBackupRecords(next)
+        localStorage.setItem(backupStorageKey, JSON.stringify(next))
+        flash('success', `已从备份恢复为新的本地作品：${imported.title}`)
       } catch {
         flash('error', '导入失败：不是有效 JSON 备份文件。')
+      } finally {
+        event.target.value = ''
       }
     }
     reader.readAsText(file)
   }
 
-  function cloudOnly() {
+  async function uploadCloudBackup() {
+    if (!exportWork) {
+      flash('error', '请先新建或打开一个作品，再进行云端备份。')
+      return
+    }
+    if (isGuest || !token) {
+      onRequireLogin()
+      return
+    }
+    setStatus('loading')
+    setMessage('正在写入后端作品快照...')
+    try {
+      const response = await fetch(`${backendApiBase}/api/work-library`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(buildCloudBackupPayload(exportWork)),
+      })
+      const result = await response.json().catch(() => null)
+      if (!response.ok || result?.code !== 200) {
+        throw new Error(result?.message || `HTTP ${response.status}`)
+      }
+      const next = [`云端快照：${exportWork.title} · ${new Date().toLocaleString()}`, ...backupRecords].slice(0, 6)
+      setBackupRecords(next)
+      localStorage.setItem(backupStorageKey, JSON.stringify(next))
+      flash('success', '云端作品快照已更新。你仍可以下载本地 JSON 作为离线备份。')
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : '后端不可用'
+      flash('error', `云端备份失败：${reason}。本地作品未丢失，可先下载 JSON 备份。`)
+    }
+  }
+
+  async function fetchCloudSnapshots() {
+    if (isGuest || !token) {
+      onRequireLogin()
+      return []
+    }
+    setStatus('loading')
+    setMessage('正在读取后端作品快照...')
+    try {
+      const response = await fetch(`${backendApiBase}/api/work-library/versions`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      const result = await response.json().catch(() => null)
+      if (!response.ok || result?.code !== 200 || !Array.isArray(result?.data)) {
+        throw new Error(result?.message || `HTTP ${response.status}`)
+      }
+      if (result.data.length === 0) {
+        setCloudSnapshots([])
+        flash('error', '云端还没有版本历史。请先写入一次云端备份。')
+        return []
+      }
+      const snapshots = [...result.data].sort(compareCloudSnapshotUpdatedAt) as CloudWorkSnapshot[]
+      setCloudSnapshots(snapshots)
+      flash('success', `已读取 ${snapshots.length} 个云端版本。`)
+      return snapshots
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : '后端不可用'
+      flash('error', `读取云端版本失败：${reason}。本地作品未被修改。`)
+      return []
+    }
+  }
+
+  function restoreCloudSnapshot(snapshot: CloudWorkSnapshot) {
+    if (!onRestoreWork) {
+      flash('error', '当前页面没有接入作品恢复入口。')
+      return
+    }
+    const restored = parseCloudSnapshot(snapshot)
+    if (!restored) {
+      flash('error', '云端快照解析失败：没有找到可恢复的作品数据。')
+      return
+    }
+    onRestoreWork(restored)
+    const next = [`云端恢复：${restored.title} · ${new Date().toLocaleString()}`, ...backupRecords].slice(0, 6)
+    setBackupRecords(next)
+    localStorage.setItem(backupStorageKey, JSON.stringify(next))
+    flash('success', `已从云端快照恢复为新的本地作品：${restored.title}`)
+  }
+
+  async function restoreLatestCloudBackup() {
+    const snapshots = cloudSnapshots.length > 0 ? cloudSnapshots : await fetchCloudSnapshots()
+    const latest = snapshots[0]
+    if (latest) {
+      restoreCloudSnapshot(latest)
+    }
+  }
+
+  function platformPublishNotice() {
     if (isGuest) onRequireLogin()
-    else flash('success', '云端接口已预留，本轮不连接真实后端。')
+    else flash('success', '发布平台授权未接入。当前可先生成简介、标签和章节文案，再手动发布。')
+  }
+
+  function generatePublishDraft(kind: 'intro' | 'tags') {
+    if (!exportWork) {
+      flash('error', '请先新建或打开一个作品，再生成发布准备内容。')
+      return
+    }
+    const draft = kind === 'tags' ? buildPublishTags(exportWork) : buildPublishIntro(exportWork)
+    setPublishDraft(draft)
+    flash('success', kind === 'tags' ? '发布标签已生成，可在右侧复制使用。' : '发布简介已生成，可在右侧复制使用。')
+  }
+
+  function copyPublishDraft() {
+    if (!publishDraft.trim()) {
+      flash('error', '请先生成发布简介或标签。')
+      return
+    }
+    navigator.clipboard?.writeText(publishDraft)
+    flash('success', '发布准备内容已复制。')
   }
 
   return (
-    <div className="grid min-h-[calc(100vh-5rem)] grid-cols-[minmax(0,1fr)_320px] gap-6 p-8">
+    <div className="yixie-editorial grid min-h-[calc(100vh-5rem)] grid-cols-[minmax(0,1fr)_320px] gap-6 bg-[#edf1ee] p-8">
       <section className="min-w-0">
         <h1 className="text-3xl font-semibold">导出 / 备份 / 发布中心</h1>
         <p className="mt-2 text-slate-600">一站式管理作品导出、本地备份和发布前准备工具。</p>
@@ -555,19 +696,55 @@ export function ExportCenterPage({ work, isGuest, onRequireLogin }: { work: Save
           {tab === 'backup' && (
             <div className="grid grid-cols-2 gap-6 p-6">
               <ActionPanel icon={HardDrive} title="备份到本地" text="下载完整作品数据 JSON，包含作品、章节、资料、记忆、检查结果和设置偏好。" action="下载 JSON 备份" onClick={downloadBackup} />
-              <ActionPanel icon={Upload} title="导入备份文件" text="选择本地 JSON 备份文件，当前 MVP 先做文件校验与提示。" action="选择文件" onClick={() => fileInputRef.current?.click()} />
-              <ActionPanel icon={Cloud} title="云端备份" text="游客不可用；登录用户后续可接入云端备份接口。" action="云端备份" onClick={cloudOnly} />
+              <ActionPanel icon={Upload} title="导入备份文件" text="选择本地 JSON 备份文件，恢复为新的本地作品；不会覆盖当前作品。" action="选择文件" onClick={() => fileInputRef.current?.click()} />
+              <ActionPanel icon={Cloud} title="云端备份" text="登录后写入后端作品快照，包含作品资料和章节正文；失败时仍保留本地备份入口。" action={status === 'loading' ? '备份中' : '写入云端快照'} onClick={uploadCloudBackup} />
+              <ActionPanel icon={RefreshCcw} title="从云端恢复" text="读取当前账号最近的后端作品快照，恢复为新的本地副本；不会覆盖当前作品。" action={status === 'loading' ? '读取中' : '恢复最新快照'} onClick={restoreLatestCloudBackup} />
+              <ActionPanel icon={Cloud} title="查看云端版本" text="列出当前账号已保存的后端版本历史，可选择其中一份恢复为本地副本。" action={status === 'loading' ? '读取中' : '查看列表'} onClick={fetchCloudSnapshots} />
               <ActionPanel icon={RefreshCcw} title="最近备份记录" text={backupRecords.join('\n') || '暂无备份记录。'} action="刷新记录" onClick={() => flash('success', '备份记录已刷新。')} />
+              {cloudSnapshots.length > 0 && (
+                <section className="col-span-2 rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h3 className="font-semibold">云端版本历史</h3>
+                      <p className="mt-1 text-sm text-slate-500">选择一份历史版本恢复为新的本地作品，不覆盖当前作品。</p>
+                    </div>
+                    <button onClick={fetchCloudSnapshots} className="rounded-md border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">刷新</button>
+                  </div>
+                  <div className="mt-4 divide-y divide-slate-100 rounded-md border border-slate-200">
+                    {cloudSnapshots.map((snapshot) => (
+                      <div key={snapshot.versionId || `${snapshot.frontendWorkId}-${snapshot.updatedAt || snapshot.createdAt}`} className="flex items-center justify-between gap-4 p-4">
+                        <div className="min-w-0">
+                          <div className="truncate font-semibold text-slate-900">{cloudSnapshotTitle(snapshot)}</div>
+                          <div className="mt-1 text-xs text-slate-500">{cloudSnapshotMeta(snapshot)}</div>
+                        </div>
+                        <button onClick={() => restoreCloudSnapshot(snapshot)} className="shrink-0 rounded-md bg-slate-950 px-3 py-2 text-sm font-semibold text-white hover:bg-slate-800">恢复副本</button>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              )}
               <input ref={fileInputRef} type="file" accept="application/json" className="hidden" onChange={importBackup} />
             </div>
           )}
 
           {tab === 'publish' && (
             <div className="grid grid-cols-2 gap-6 p-6">
-              <ActionPanel icon={Send} title="发布到自定义平台" text="占位：本轮不接入真实平台，不自动发文。" action="需要登录" onClick={cloudOnly} />
-              <ActionPanel icon={FileText} title="生成发布简介" text="根据当前章节生成作品简介、章节摘要、标签和推广文案。" action="生成占位内容" onClick={() => flash('success', '已生成发布前准备内容占位。')} />
-              <ActionPanel icon={Palette} title="生成标签" text="输出适合平台检索的题材、角色、风格标签。" action="生成标签" onClick={() => flash('success', '标签已生成：成长、悬疑、强钩子、人物关系。')} />
+              <ActionPanel icon={Send} title="发布到自定义平台" text="暂不自动发文；先生成可复制的平台简介、标签和章节摘要，作者手动发布。" action="准备文案" onClick={platformPublishNotice} />
+              <ActionPanel icon={FileText} title="生成发布简介" text="根据当前作品资料和章节正文，生成可复制的简介、章节摘要和推广语。" action="生成简介" onClick={() => generatePublishDraft('intro')} />
+              <ActionPanel icon={Palette} title="生成标签" text="输出适合平台检索的题材、角色、风格标签。" action="生成标签" onClick={() => generatePublishDraft('tags')} />
               <ActionPanel icon={AlertTriangle} title="发布须知" text="不会接入起点、番茄、晋江等真实平台；不会自动发文。" action="知道了" onClick={() => flash('success', '发布中心当前仅作为准备工具。')} />
+              <section className="col-span-2 rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="font-semibold">发布准备草稿</h3>
+                    <p className="mt-1 text-sm text-slate-500">本地生成，不会自动发布到任何平台。</p>
+                  </div>
+                  <button onClick={copyPublishDraft} className="rounded-md border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">复制</button>
+                </div>
+                <pre className="mt-4 min-h-[180px] whitespace-pre-wrap rounded-md border border-slate-200 bg-slate-50 p-4 text-sm leading-7 text-slate-700">
+                  {publishDraft || '生成发布简介或标签后，会显示在这里。'}
+                </pre>
+              </section>
             </div>
           )}
         </div>
@@ -807,6 +984,104 @@ function buildExportContent(work: SavedWork, format: ExportFormat, options: { in
   return lines.join('\n')
 }
 
+function buildCloudBackupPayload(work: SavedWork) {
+  const chapters = (work.chapters && work.chapters.length > 0
+    ? work.chapters
+    : [{
+        id: 'chapter-1',
+        chapterNumber: 1,
+        title: work.chapterTitle || '第一章：未命名章节',
+        content: work.chapterText || '',
+        status: 'draft' as const,
+        wordCount: (work.chapterText || '').replace(/\s/g, '').length,
+      }]
+  ).map((chapter, index) => ({
+    frontendChapterId: chapter.id || `chapter-${index + 1}`,
+    chapterNumber: chapter.chapterNumber || index + 1,
+    title: chapter.title || `第 ${index + 1} 章`,
+    content: chapter.content || '',
+    status: chapter.status === 'published' ? 'published' : 'draft',
+  }))
+
+  return {
+    frontendWorkId: work.id,
+    title: work.title || '未命名作品',
+    globalOutline: [
+      ...(work.globalOutline || []),
+      work.summary,
+      work.materials?.summary,
+      work.materials?.nextStep,
+    ].filter(Boolean).join('\n'),
+    payload: JSON.stringify(work),
+    chapters,
+    chapterTitle: chapters[0]?.title || work.chapterTitle,
+    chapterText: chapters[0]?.content || work.chapterText,
+  }
+}
+
+function buildPublishIntro(work: SavedWork) {
+  const summary = work.summary || work.description || work.materials.summary || summarizeText(work.chapterText, 96)
+  const sellingPoint = work.sellingPoint || work.materials.sellingPoint || '以人物选择和章节钩子推动读者继续阅读。'
+  const chapterSummary = summarizeText(work.chapterText, 120)
+  const nextStep = work.materials.nextStep || '继续推进当前章节冲突，并回收已埋下的关键线索。'
+
+  return [
+    `《${work.title || '未命名作品'}》发布准备`,
+    '',
+    `题材：${work.type || work.materials.genre || '待整理题材'}`,
+    `一句话卖点：${sellingPoint}`,
+    '',
+    '作品简介：',
+    summary,
+    '',
+    `当前章节：${work.chapterTitle || '未命名章节'}`,
+    `章节摘要：${chapterSummary}`,
+    '',
+    '推广短句：',
+    `${sellingPoint}如果你喜欢节奏清晰、人物关系有拉扯感的长篇故事，可以从这一章开始读。`,
+    '',
+    `下一步更新方向：${nextStep}`,
+  ].join('\n')
+}
+
+function buildPublishTags(work: SavedWork) {
+  const base = [
+    work.type,
+    work.materials.genre,
+    ...work.tags,
+    ...work.materials.characters,
+    work.sellingPoint,
+    work.materials.sellingPoint,
+  ].filter(Boolean).join(' ')
+
+  const inferred = [
+    ['成长', /成长|逆袭|重生|觉醒|升级|系统/.test(base)],
+    ['悬疑', /悬疑|谜|案|真相|秘密|调查/.test(base)],
+    ['强钩子', /钩子|冲突|危机|背叛|复仇|竞赛|对手/.test(base)],
+    ['人物关系', /暗恋|关系|羁绊|家族|师徒|同伴|恋/.test(base)],
+    ['世界观', /世界|规则|异能|魔法|仙|科幻|末世/.test(base)],
+    ['短剧潜力', /反转|打脸|复仇|高能|爽点|悬念/.test(base)],
+  ].filter(([, hit]) => hit).map(([tag]) => String(tag))
+
+  const tags = Array.from(new Set([...(work.tags || []), work.type || work.materials.genre, ...inferred, '连载', '长篇'].filter(Boolean))).slice(0, 12)
+  return [
+    `《${work.title || '未命名作品'}》发布标签`,
+    '',
+    tags.map((tag) => `#${tag}`).join(' '),
+    '',
+    '平台检索关键词：',
+    tags.join('、'),
+    '',
+    '备注：标签由本地规则根据作品资料生成，发布前建议人工删改。',
+  ].join('\n')
+}
+
+function summarizeText(text: string, maxLength: number) {
+  const normalized = (text || '').replace(/\s+/g, ' ').trim()
+  if (!normalized) return '当前内容尚少，建议补充章节正文后再生成更准确的发布文案。'
+  return normalized.length > maxLength ? `${normalized.slice(0, maxLength)}...` : normalized
+}
+
 function buildDocxBlob(work: SavedWork, options: { includeTitle: boolean; includeInfo: boolean; generateToc: boolean }) {
   const paragraphs = buildPlainExportLines(work, options).map((line) => `<w:p><w:r><w:t xml:space="preserve">${escapeXml(line)}</w:t></w:r></w:p>`).join('')
   const documentXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -980,6 +1255,181 @@ function readJson(key: string) {
   } catch {
     return null
   }
+}
+
+type CloudSnapshotChapter = {
+  frontendChapterId?: string
+  chapterNumber?: number
+  title?: string
+  content?: string
+  status?: string
+}
+
+type CloudWorkSnapshot = {
+  versionId?: string
+  frontendWorkId?: string
+  title?: string
+  payload?: string
+  chapters?: CloudSnapshotChapter[]
+  createdAt?: string
+  updatedAt?: string
+  chapterCount?: number
+  wordCount?: number
+}
+
+function compareCloudSnapshotUpdatedAt(left: CloudWorkSnapshot, right: CloudWorkSnapshot) {
+  return new Date(right.updatedAt || 0).getTime() - new Date(left.updatedAt || 0).getTime()
+}
+
+function cloudSnapshotTitle(snapshot: CloudWorkSnapshot) {
+  if (snapshot.title) return snapshot.title
+  try {
+    const parsed = JSON.parse(snapshot.payload || '{}') as Partial<SavedWork>
+    return parsed.title || snapshot.frontendWorkId || '未命名云端快照'
+  } catch {
+    return snapshot.frontendWorkId || '未命名云端快照'
+  }
+}
+
+function cloudSnapshotMeta(snapshot: CloudWorkSnapshot) {
+  const updatedAt = snapshot.updatedAt || snapshot.createdAt
+  const timeText = updatedAt ? new Date(updatedAt).toLocaleString() : '未知时间'
+  const chapterCount = snapshot.chapterCount || (Array.isArray(snapshot.chapters) ? snapshot.chapters.length : 0)
+  const wordCount = snapshot.wordCount ? ` · ${snapshot.wordCount.toLocaleString()} 字` : ''
+  return `${timeText} · ${chapterCount || 1} 章${wordCount} · ${snapshot.frontendWorkId || '无本地映射 ID'}`
+}
+
+function parseCloudSnapshot(snapshot: CloudWorkSnapshot): SavedWork | null {
+  if (!snapshot?.payload) return null
+  let parsed: Partial<SavedWork>
+  try {
+    parsed = JSON.parse(snapshot.payload) as Partial<SavedWork>
+  } catch {
+    return null
+  }
+
+  const cloudChapters = Array.isArray(snapshot.chapters) ? snapshot.chapters : []
+  const chapters = cloudChapters.length > 0
+    ? cloudChapters.map((chapter, index) => {
+        const content = String(chapter.content || '')
+        return {
+          id: chapter.frontendChapterId || `cloud-chapter-${index + 1}`,
+          chapterNumber: Number.isFinite(Number(chapter.chapterNumber)) ? Number(chapter.chapterNumber) : index + 1,
+          title: chapter.title || `第 ${index + 1} 章`,
+          content,
+          status: chapter.status === 'published' ? 'published' as const : 'draft' as const,
+          wordCount: content.replace(/\s/g, '').length,
+        }
+      })
+    : parsed.chapters
+
+  const restored = parseImportedBackup(JSON.stringify({
+    work: {
+      ...parsed,
+      id: snapshot.frontendWorkId || parsed.id,
+      chapters,
+      chapterTitle: chapters?.[0]?.title || parsed.chapterTitle,
+      chapterText: chapters?.[0]?.content || parsed.chapterText,
+    },
+  }))
+  if (!restored) return null
+
+  const baseTitle = restored.title.replace(/（导入）$/, '').replace(/（云端恢复）$/, '')
+  return {
+    ...restored,
+    title: `${baseTitle}（云端恢复）`,
+    tags: Array.from(new Set([...(restored.tags || []), '云端恢复'])),
+    summary: restored.summary || '从后端作品快照恢复的本地副本。',
+  }
+}
+
+function parseImportedBackup(raw: string): SavedWork | null {
+  const parsed = JSON.parse(raw) as unknown
+  const source = extractBackupWork(parsed)
+  if (!source || typeof source !== 'object') return null
+
+  const candidate = source as Partial<SavedWork>
+  if (!candidate.title && !candidate.chapterTitle && !candidate.chapterText && !candidate.chapters) return null
+
+  const now = new Date().toLocaleString()
+  const chapters = normalizeImportedChapters(candidate)
+  const firstChapter = chapters[0]
+  const title = String(candidate.title || '导入作品').trim() || '导入作品'
+  const type = String(candidate.type || candidate.materials?.genre || '导入备份').trim() || '导入备份'
+  const summary = String(candidate.summary || candidate.description || candidate.materials?.summary || '从本地备份导入的作品。')
+  const words = chapters.reduce((sum, chapter) => sum + chapter.wordCount, 0)
+
+  return {
+    ...(candidate as SavedWork),
+    id: `imported-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    title: title.endsWith('（导入）') ? title : `${title}（导入）`,
+    type,
+    status: 'local-draft',
+    projectStatus: 'local-draft',
+    syncState: 'local-only',
+    words,
+    chapterCount: chapters.length,
+    chapters,
+    chapterTitle: firstChapter.title,
+    chapterText: firstChapter.content,
+    updatedAt: now,
+    createdAt: now,
+    tags: Array.from(new Set([...(Array.isArray(candidate.tags) ? candidate.tags : []), '本地导入'])),
+    summary,
+    description: candidate.description || summary,
+    cover: candidate.cover || 'from-slate-700 via-teal-500 to-emerald-200',
+    materials: {
+      genre: candidate.materials?.genre || type,
+      sellingPoint: candidate.materials?.sellingPoint || candidate.sellingPoint || '',
+      characters: Array.isArray(candidate.materials?.characters) ? candidate.materials.characters : [],
+      summary,
+      nextStep: candidate.materials?.nextStep || '检查导入章节与资料，继续完善当前作品。',
+    },
+  }
+}
+
+function extractBackupWork(value: unknown): unknown {
+  if (!value || typeof value !== 'object') return null
+  const record = value as Record<string, unknown>
+  if (record.work) return record.work
+  if (Array.isArray(record.works) && record.works[0]) return record.works[0]
+  if (record.exportVersion && record.work) return record.work
+  return value
+}
+
+function normalizeImportedChapters(work: Partial<SavedWork>) {
+  const rawChapters = Array.isArray(work.chapters) ? work.chapters : []
+  const chapters = rawChapters
+    .map((chapter, index) => {
+      const content = String(chapter?.content || '')
+      return {
+        id: String(chapter?.id || `chapter-${index + 1}`),
+        chapterNumber: Number.isFinite(Number(chapter?.chapterNumber)) ? Number(chapter?.chapterNumber) : index + 1,
+        title: String(chapter?.title || `第 ${index + 1} 章`),
+        content,
+        status: chapter?.status === 'published' ? 'published' as const : 'draft' as const,
+        wordCount: content.replace(/\s/g, '').length,
+        createdAt: chapter?.createdAt,
+        updatedAt: chapter?.updatedAt,
+      }
+    })
+    .sort((a, b) => a.chapterNumber - b.chapterNumber)
+
+  if (chapters.length > 0) {
+    return chapters.map((chapter, index) => ({ ...chapter, id: `imported-chapter-${Date.now()}-${index + 1}`, chapterNumber: index + 1 }))
+  }
+
+  const content = String(work.chapterText || '')
+  return [{
+    id: `imported-chapter-${Date.now()}-1`,
+    chapterNumber: 1,
+    title: String(work.chapterTitle || '第一章：未命名章节'),
+    content,
+    status: 'draft' as const,
+    wordCount: content.replace(/\s/g, '').length,
+    createdAt: new Date().toLocaleString(),
+    updatedAt: new Date().toLocaleString(),
+  }]
 }
 
 function sampleWork(): SavedWork {

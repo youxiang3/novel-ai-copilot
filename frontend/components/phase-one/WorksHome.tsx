@@ -243,7 +243,7 @@ function ProjectDashboard({
     downloadWorkExport(normalized, format)
     setNotice(format === 'markdown'
       ? 'Markdown 已导出。当前导出内容来自本地保存数据，不会删除或修改当前作品。'
-      : 'JSON 备份已导出。当前版本暂不支持导入恢复，也不是云端备份。')
+      : 'JSON 备份已导出。可在作品库或导出 / 备份中心导入恢复为本地副本；这不是云端备份。')
     setExportTarget(null)
   }
 
@@ -906,7 +906,7 @@ function WorkExportModal({ work, onClose, onExport }: { work: WorkItem; onClose:
 
         <div className="space-y-4 px-6 py-5">
           <div className="rounded-md border border-slate-200 bg-slate-50 px-4 py-3 text-sm leading-6 text-slate-600">
-            当前导出内容来自本地保存数据。导出不会删除或修改当前作品。JSON 仅用于备份，当前版本暂不支持导入恢复。
+            当前导出内容来自本地保存数据。导出不会删除或修改当前作品。JSON 可用于导入恢复为新的本地副本，不代表云端备份。
           </div>
           <div className="grid grid-cols-2 gap-3">
             <button onClick={() => onExport('markdown')} className="rounded-md border border-slate-200 p-4 text-left hover:border-slate-400 hover:bg-slate-50">

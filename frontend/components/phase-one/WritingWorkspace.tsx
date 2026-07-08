@@ -37,7 +37,7 @@ import {
   Wand2,
   X,
 } from 'lucide-react'
-import type { CheckIssue, CheckIssueType, IssueSeverity, LoreEntry, LoreType, MemoryEntry, MemoryType, OperationStatus, SavedWork, WorkChapter } from './types'
+import type { CheckIssue, CheckIssueType, IssueSeverity, LoreEntry, LoreType, MemoryEntry, MemoryType, OperationStatus, SavedWork, WorkChapter, WorkVersionRecord } from './types'
 import { cn } from '@/lib/utils'
 
 type WorkspaceView = 'overview' | 'editor' | 'lore' | 'memory' | 'checks' | 'ip'
@@ -134,6 +134,11 @@ export function WritingWorkspace({
   onOpenStoryGraph,
   onWorkChange,
   onSave,
+  backendToken,
+  versionRecords = [],
+  onCreateVersion,
+  onRestoreVersion,
+  onManualSync,
 }: {
   work: SavedWork
   status: OperationStatus
@@ -143,6 +148,11 @@ export function WritingWorkspace({
   onOpenStoryGraph?: () => void
   onWorkChange: (work: SavedWork) => void
   onSave: () => void
+  backendToken?: string
+  versionRecords?: WorkVersionRecord[]
+  onCreateVersion?: () => void
+  onRestoreVersion?: (record: WorkVersionRecord) => void
+  onManualSync?: () => void
 }) {
   const work = normalizeWorkspaceWork(rawWork)
   const [view, setView] = useState<WorkspaceView>(initialView)
@@ -161,6 +171,7 @@ export function WritingWorkspace({
   const [webAiResult, setWebAiResult] = useState('')
   const [promptRuns, setPromptRuns] = useState<PromptRunRecord[]>([])
   const [artifactRecords, setArtifactRecords] = useState<ArtifactRecord[]>([])
+  const [selectedChapterIds, setSelectedChapterIds] = useState<string[]>([])
   const [ipMode, setIpMode] = useState<IpFactoryMode>('screenplay')
   const [ipOutput, setIpOutput] = useState('')
   const [ipGenerating, setIpGenerating] = useState(false)
@@ -421,6 +432,62 @@ export function WritingWorkspace({
     flash('success', '章节发布状态已更新，保存后会同步。')
   }
 
+  function moveChapter(id: string, direction: -1 | 1) {
+    const index = chapters.findIndex((chapter) => chapter.id === id)
+    const nextIndex = index + direction
+    if (index < 0 || nextIndex < 0 || nextIndex >= chapters.length) return
+    const nextChapters = [...chapters]
+    const current = nextChapters[index]
+    nextChapters[index] = nextChapters[nextIndex]
+    nextChapters[nextIndex] = current
+    onWorkChange(applyWorkspaceChapters(work, nextChapters))
+    flash('success', '章节顺序已更新，保存后写入作品库。')
+  }
+
+  function toggleChapterSelection(id: string) {
+    setSelectedChapterIds((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id])
+  }
+
+  function batchSetChapterStatus(status: WorkChapter['status']) {
+    if (selectedChapterIds.length === 0) return
+    const nextChapters = chapters.map((chapter) => selectedChapterIds.includes(chapter.id) ? { ...chapter, status, updatedAt: '刚刚' } : chapter)
+    onWorkChange(applyWorkspaceChapters(work, nextChapters))
+    flash('success', status === 'published' ? '已将选中章节标记为发布。' : '已将选中章节退回草稿。')
+  }
+
+  function batchDeleteChapters() {
+    if (selectedChapterIds.length === 0) return
+    if (chapters.length - selectedChapterIds.length < 1) {
+      flash('error', '至少保留一个章节。')
+      return
+    }
+    if (!window.confirm(`确认删除 ${selectedChapterIds.length} 个选中章节吗？`)) return
+    const nextChapters = chapters.filter((chapter) => !selectedChapterIds.includes(chapter.id))
+    onWorkChange(applyWorkspaceChapters(work, nextChapters))
+    setSelectedChapterIds([])
+    if (!nextChapters.some((chapter) => chapter.id === currentChapter.id)) setSelectedChapterId(nextChapters[0]?.id || '')
+    flash('success', '选中章节已删除，保存后生效。')
+  }
+
+  function runBackendCheck() {
+    if (!backendToken) {
+      recordArtifact('check', `${currentChapter.title} 后端分析入口`, '当前未登录或后端 token 不可用。本次保留本地规则检查与 Web AI Prompt 路径；登录并连接后端后可优先尝试后端章节分析。', 'local')
+      flash('error', '后端分析需要登录并连接后端；已保留本地检查入口。')
+      return
+    }
+    runLocalCheck()
+    recordArtifact('check', `${currentChapter.title} 后端分析回退`, '已检测到登录 token，但当前前端作品尚未绑定真实后端 novelId/chapterId，因此本次使用本地 OOC / 伏笔规则检查作为 MVP 回退。', 'local')
+  }
+
+  function syncMemorySummary() {
+    const confirmed = memoryEntries.filter((entry) => normalizeMemoryEntry(entry).status === 'confirmed')
+    const content = confirmed.length
+      ? confirmed.map((entry) => `- ${entry.title}: ${entry.content}`).join('\n')
+      : memoryEntries.map((entry) => `- ${entry.title}: ${entry.content}`).join('\n')
+    recordArtifact('summary', `${work.title} 记忆摘要`, content || '当前还没有可同步的长篇记忆。', backendToken ? 'backend' : 'local')
+    flash(backendToken ? 'success' : 'error', backendToken ? '已生成可提交到后端记忆摘要的本地记录。' : '当前未连接后端，已先保存本地记忆摘要记录。')
+  }
+
   function openWebAi(target: 'check' | 'memory') {
     setWebAiTarget(target)
     setWebAiResult('')
@@ -614,17 +681,34 @@ export function WritingWorkspace({
                   <Plus className="h-4 w-4" />
                 </button>
               </div>
+              {selectedChapterIds.length > 0 && (
+                <div className="mt-3 rounded-md border border-[#d8e5e4] bg-[#f6fbfa] p-2 text-xs">
+                  <div className="font-semibold text-slate-700">已选 {selectedChapterIds.length} 章</div>
+                  <div className="mt-2 grid grid-cols-2 gap-1">
+                    <button onClick={() => batchSetChapterStatus('published')} className="rounded border border-emerald-200 bg-white px-2 py-1 text-emerald-700">批量发布</button>
+                    <button onClick={() => batchSetChapterStatus('draft')} className="rounded border border-slate-200 bg-white px-2 py-1 text-slate-600">退回草稿</button>
+                    <button onClick={() => setSelectedChapterIds([])} className="rounded border border-slate-200 bg-white px-2 py-1 text-slate-600">取消选择</button>
+                    <button onClick={batchDeleteChapters} className="rounded border border-red-200 bg-white px-2 py-1 text-red-600">批量删除</button>
+                  </div>
+                </div>
+              )}
               <div className="mt-3 space-y-2 text-sm">
                 <SideButton active={view === 'overview'} icon={BookOpen} label="作品总览" onClick={() => setView('overview')} />
-                {chapters.map((chapter) => (
+                {chapters.map((chapter, index) => (
                   <ChapterNavItem
                     key={chapter.id}
                     chapter={chapter}
                     active={view === 'editor' && chapter.id === currentChapter.id}
+                    selected={selectedChapterIds.includes(chapter.id)}
                     onOpen={() => {
                       setSelectedChapterId(chapter.id)
                       setView('editor')
                     }}
+                    onSelect={() => toggleChapterSelection(chapter.id)}
+                    onMoveUp={() => moveChapter(chapter.id, -1)}
+                    onMoveDown={() => moveChapter(chapter.id, 1)}
+                    moveUpDisabled={index === 0}
+                    moveDownDisabled={index === chapters.length - 1}
                     onDelete={() => deleteChapter(chapter.id)}
                     onTogglePublish={() => togglePublishChapter(chapter.id)}
                   />
@@ -701,6 +785,7 @@ export function WritingWorkspace({
                 onStatusChange={updateMemoryStatus}
                 onDelete={deleteMemory}
                 onOpenWebAi={() => openWebAi('memory')}
+                onSyncSummary={syncMemorySummary}
               />
             )}
             {view === 'checks' && (
@@ -711,6 +796,7 @@ export function WritingWorkspace({
                 onInsertSuggestion={insertSuggestion}
                 onStatusChange={updateIssueStatus}
                 onOpenWebAi={() => openWebAi('check')}
+                onRunBackendCheck={runBackendCheck}
               />
             )}
             {view === 'ip' && (
@@ -750,6 +836,13 @@ export function WritingWorkspace({
               <PilotCard title="检查人物与伏笔" text={openIssues.length ? `${openIssues.length} 条待处理` : '本地规则检查'} action="检查" onAction={runLocalCheck} />
               <PilotCard title="章节衍生" text="短剧 / 互动剧情游戏设定包" action="打开" onAction={() => setView('ip')} />
             </div>
+            <VersionHistoryPanel
+              records={versionRecords}
+              canSync={Boolean(backendToken)}
+              onCreateVersion={onCreateVersion}
+              onManualSync={onManualSync}
+              onRestoreVersion={onRestoreVersion}
+            />
             <ArtifactRunList records={artifactRecords} onCopy={copyArtifact} onInsert={insertArtifact} onDownload={downloadArtifact} />
           </aside>
         </div>
@@ -1168,19 +1261,48 @@ function applyWorkspaceChapters(work: SavedWork, chapters: WorkChapter[]): Saved
   }
 }
 
-function ChapterNavItem({ chapter, active, onOpen, onDelete, onTogglePublish }: { chapter: WorkChapter; active: boolean; onOpen: () => void; onDelete: () => void; onTogglePublish: () => void }) {
+function ChapterNavItem({
+  chapter,
+  active,
+  selected,
+  moveUpDisabled,
+  moveDownDisabled,
+  onOpen,
+  onSelect,
+  onMoveUp,
+  onMoveDown,
+  onDelete,
+  onTogglePublish,
+}: {
+  chapter: WorkChapter
+  active: boolean
+  selected: boolean
+  moveUpDisabled: boolean
+  moveDownDisabled: boolean
+  onOpen: () => void
+  onSelect: () => void
+  onMoveUp: () => void
+  onMoveDown: () => void
+  onDelete: () => void
+  onTogglePublish: () => void
+}) {
   return (
-    <div className={cn('group rounded-md border px-2 py-2', active ? 'border-blue-200 bg-blue-50' : 'border-transparent hover:border-slate-200 hover:bg-slate-50')}>
-      <button onClick={onOpen} className="flex w-full items-center gap-2 text-left">
-        <FileText className={cn('h-4 w-4 shrink-0', active ? 'text-blue-600' : 'text-slate-400')} />
-        <span className="min-w-0 flex-1 truncate text-sm font-medium">{chapter.title}</span>
-        <span className={cn('rounded px-1.5 py-0.5 text-[10px]', chapter.status === 'published' ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500')}>
-          {chapter.status === 'published' ? '已发布' : '草稿'}
-        </span>
-      </button>
+    <div className={cn('group rounded-md border px-2 py-2', active ? 'border-blue-200 bg-blue-50' : selected ? 'border-[#d8e5e4] bg-[#f6fbfa]' : 'border-transparent hover:border-slate-200 hover:bg-slate-50')}>
+      <div className="flex w-full items-center gap-2">
+        <input type="checkbox" checked={selected} onChange={onSelect} onClick={(event) => event.stopPropagation()} className="h-3.5 w-3.5 rounded border-slate-300 accent-[#0f766e]" aria-label="选择章节" />
+        <button onClick={onOpen} className="flex min-w-0 flex-1 items-center gap-2 text-left">
+          <FileText className={cn('h-4 w-4 shrink-0', active ? 'text-blue-600' : 'text-slate-400')} />
+          <span className="min-w-0 flex-1 truncate text-sm font-medium">{chapter.title}</span>
+          <span className={cn('rounded px-1.5 py-0.5 text-[10px]', chapter.status === 'published' ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500')}>
+            {chapter.status === 'published' ? '已发布' : '草稿'}
+          </span>
+        </button>
+      </div>
       <div className="mt-2 flex items-center justify-between text-[11px] text-slate-400">
         <span>第 {chapter.chapterNumber} 章 · {chapter.wordCount.toLocaleString()} 字</span>
         <div className="flex items-center gap-1 opacity-0 transition group-hover:opacity-100">
+          <button onClick={onMoveUp} disabled={moveUpDisabled} className="rounded px-1.5 py-0.5 text-slate-500 hover:bg-white hover:text-teal-700 disabled:opacity-30">↑</button>
+          <button onClick={onMoveDown} disabled={moveDownDisabled} className="rounded px-1.5 py-0.5 text-slate-500 hover:bg-white hover:text-teal-700 disabled:opacity-30">↓</button>
           <button onClick={onTogglePublish} className="rounded px-1.5 py-0.5 text-slate-500 hover:bg-white hover:text-emerald-600">
             {chapter.status === 'published' ? '撤回' : '发布'}
           </button>
@@ -1330,6 +1452,7 @@ function MemoryView({
   onStatusChange,
   onDelete,
   onOpenWebAi,
+  onSyncSummary,
 }: {
   entries: MemoryEntry[]
   stats: Array<{ type: MemoryType; count: number }>
@@ -1339,6 +1462,7 @@ function MemoryView({
   onStatusChange: (id: string, status: NonNullable<MemoryEntry['status']>) => void
   onDelete: (id: string) => void
   onOpenWebAi: () => void
+  onSyncSummary: () => void
 }) {
   const normalizedEntries = entries.map(normalizeMemoryEntry)
   const confirmedCount = normalizedEntries.filter((entry) => entry.status === 'confirmed').length
@@ -1353,6 +1477,7 @@ function MemoryView({
           <p className="mt-1 text-sm text-slate-500">Memory V0：本地维护章节摘要、人物状态、世界观事实和未回收伏笔；真实模型抽取待接入。</p>
         </div>
         <div className="flex gap-2">
+          <button onClick={onSyncSummary} className="rounded-md border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">同步/保存记忆摘要</button>
           <button onClick={onOpenWebAi} className="rounded-md border border-violet-200 px-4 py-2 text-sm font-semibold text-violet-700 hover:bg-violet-50">Web AI 记忆 Prompt</button>
           <button onClick={onGenerateSummary} className="rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-500">生成当前章节摘要</button>
         </div>
@@ -1406,6 +1531,7 @@ function ChecksView({
   onInsertSuggestion,
   onStatusChange,
   onOpenWebAi,
+  onRunBackendCheck,
 }: {
   issues: CheckIssue[]
   onRunCheck: () => void
@@ -1413,6 +1539,7 @@ function ChecksView({
   onInsertSuggestion: (text: string) => void
   onStatusChange: (id: string, status: CheckIssue['status']) => void
   onOpenWebAi: () => void
+  onRunBackendCheck: () => void
 }) {
   const counts = {
     high: issues.filter((issue) => issue.severity === 'high' && issue.status === 'open').length,
@@ -1429,6 +1556,7 @@ function ChecksView({
         </div>
         <div className="flex gap-2">
           <button onClick={onOpenWebAi} className="rounded-md border border-violet-200 px-4 py-2 text-sm font-semibold text-violet-700 hover:bg-violet-50">Web AI 检查 Prompt</button>
+          <button onClick={onRunBackendCheck} className="rounded-md border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">后端分析</button>
           <button onClick={onRunCheck} className="rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-500">开始本地检查</button>
         </div>
       </div>
@@ -1572,6 +1700,50 @@ function IpModeCard({ active, icon: Icon, title, description, action, disabled, 
         {action}
       </button>
     </article>
+  )
+}
+
+function VersionHistoryPanel({
+  records,
+  canSync,
+  onCreateVersion,
+  onManualSync,
+  onRestoreVersion,
+}: {
+  records: WorkVersionRecord[]
+  canSync: boolean
+  onCreateVersion?: () => void
+  onManualSync?: () => void
+  onRestoreVersion?: (record: WorkVersionRecord) => void
+}) {
+  return (
+    <section className="mt-5 rounded-lg border border-[#d8e5e4] bg-white/78 p-3">
+      <div className="flex items-center justify-between gap-2">
+        <h3 className="flex items-center gap-2 text-sm font-semibold text-slate-900"><History className="h-4 w-4 text-[#2f7f86]" />版本与同步</h3>
+        <span className={cn('rounded px-2 py-0.5 text-[11px] font-semibold', canSync ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700')}>
+          {canSync ? '可手动同步' : '本地模式'}
+        </span>
+      </div>
+      <p className="mt-2 text-xs leading-5 text-slate-500">MVP：保留本地快照，可恢复为新副本；云端仅做手动作品快照，不做实时协同。</p>
+      <div className="mt-3 grid grid-cols-2 gap-2">
+        <button onClick={onCreateVersion} className="rounded-md border border-slate-200 bg-white px-2 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50">留版本</button>
+        <button onClick={onManualSync} className="rounded-md bg-slate-950 px-2 py-2 text-xs font-semibold text-white hover:bg-slate-800">{canSync ? '手动同步' : '本地备份'}</button>
+      </div>
+      <div className="mt-3 space-y-2">
+        {records.slice(0, 4).map((record) => (
+          <article key={record.id} className="rounded-md border border-slate-100 bg-[#f8fbfa] p-2">
+            <div className="flex items-center justify-between gap-2">
+              <div className="min-w-0">
+                <div className="truncate text-xs font-semibold text-slate-800">{record.createdAt}</div>
+                <div className="mt-0.5 text-[11px] text-slate-500">{record.chapterCount} 章 · {record.wordCount.toLocaleString()} 字</div>
+              </div>
+              <button onClick={() => onRestoreVersion?.(record)} className="shrink-0 rounded border border-[#d8e5e4] bg-white px-2 py-1 text-[11px] font-semibold text-[#0f766e] hover:bg-[#e7f3ef]">恢复副本</button>
+            </div>
+          </article>
+        ))}
+        {records.length === 0 && <div className="rounded-md border border-dashed border-slate-200 p-3 text-center text-xs text-slate-500">还没有版本快照，保存或点击“留版本”后会出现在这里。</div>}
+      </div>
+    </section>
   )
 }
 

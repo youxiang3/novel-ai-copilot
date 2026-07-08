@@ -110,6 +110,30 @@
     box-shadow: 0 24px 70px rgb(15 23 42 / 0.14) !important;
   }
 
+  .yixie-editorial .from-blue-500,
+  .yixie-editorial .from-blue-100,
+  .yixie-editorial .from-violet-100 {
+    --tw-gradient-from: rgb(231 243 239 / 1) var(--tw-gradient-from-position) !important;
+    --tw-gradient-to: rgb(231 243 239 / 0) var(--tw-gradient-to-position) !important;
+    --tw-gradient-stops: var(--tw-gradient-from), var(--tw-gradient-to) !important;
+  }
+
+  .yixie-editorial .to-violet-500,
+  .yixie-editorial .to-violet-100,
+  .yixie-editorial .to-blue-50 {
+    --tw-gradient-to: rgb(15 118 110 / 0.18) var(--tw-gradient-to-position) !important;
+  }
+
+  .yixie-editorial .hover\:border-blue-200:hover,
+  .yixie-editorial .hover\:border-violet-400:hover {
+    border-color: var(--editorial-line) !important;
+  }
+
+  .yixie-editorial .ring-blue-500\/15,
+  .yixie-editorial .ring-blue-500\/20 {
+    --tw-ring-color: rgb(15 118 110 / 0.12) !important;
+  }
+
   .paper-panel {
     background:
       linear-gradient(180deg, hsl(0 0% 100% / 0.94), hsl(185 35% 98% / 0.94)),

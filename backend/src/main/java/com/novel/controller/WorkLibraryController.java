@@ -1,13 +1,18 @@
 package com.novel.controller;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.novel.common.Result;
 import com.novel.config.UserContext;
 import com.novel.dto.WorkSnapshotRequest;
 import com.novel.dto.WorkSnapshotResponse;
 import com.novel.dto.WorkChapterSnapshot;
+import com.novel.dto.WorkSnapshotVersionResponse;
 import com.novel.entity.Chapter;
 import com.novel.entity.Novel;
+import com.novel.entity.WorkSnapshotVersion;
+import com.novel.mapper.WorkSnapshotVersionMapper;
 import com.novel.service.ChapterService;
 import com.novel.service.NovelService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -33,6 +38,8 @@ public class WorkLibraryController {
 
     private final NovelService novelService;
     private final ChapterService chapterService;
+    private final WorkSnapshotVersionMapper workSnapshotVersionMapper;
+    private final ObjectMapper objectMapper;
 
     @GetMapping
     @Operation(summary = "获取当前用户作品快照")
@@ -41,6 +48,21 @@ public class WorkLibraryController {
         return Result.success(novelService.listByUserId(userId).stream()
                 .filter(novel -> novel.getFrontendWorkId() != null && novel.getSavedWorkPayload() != null)
                 .map(this::toResponse)
+                .toList());
+    }
+
+    @GetMapping("/versions")
+    @Operation(summary = "获取当前用户作品云端版本历史")
+    public Result<List<WorkSnapshotVersionResponse>> versions(@RequestParam(required = false) String frontendWorkId) {
+        UUID userId = requireUserId();
+        LambdaQueryWrapper<WorkSnapshotVersion> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(WorkSnapshotVersion::getUserId, userId);
+        if (!isBlank(frontendWorkId)) {
+            wrapper.eq(WorkSnapshotVersion::getFrontendWorkId, frontendWorkId);
+        }
+        wrapper.orderByDesc(WorkSnapshotVersion::getCreatedAt).last("limit 80");
+        return Result.success(workSnapshotVersionMapper.selectList(wrapper).stream()
+                .map(this::toVersionResponse)
                 .toList());
     }
 
@@ -77,6 +99,7 @@ public class WorkLibraryController {
         }
 
         syncChapters(novel.getId(), request);
+        saveSnapshotVersion(userId, novel, normalizeChapterSnapshots(request), request);
         return Result.success(toResponse(novelService.getById(novel.getId())));
     }
 
@@ -172,6 +195,71 @@ public class WorkLibraryController {
         snapshot.setContent(chapter.getContent());
         snapshot.setStatus(chapter.getStatus());
         return snapshot;
+    }
+
+    private void saveSnapshotVersion(UUID userId, Novel novel, List<WorkChapterSnapshot> chapters, WorkSnapshotRequest request) {
+        WorkSnapshotVersion version = new WorkSnapshotVersion();
+        version.setUserId(userId);
+        version.setNovelId(novel.getId());
+        version.setFrontendWorkId(novel.getFrontendWorkId());
+        version.setTitle(novel.getTitle());
+        version.setPayload(novel.getSavedWorkPayload());
+        version.setGlobalOutline(novel.getGlobalOutline());
+        version.setChapterCount(chapters.size());
+        version.setWordCount(chapters.stream().mapToInt(chapter -> chapter.getContent() == null ? 0 : chapter.getContent().replaceAll("\\s+", "").length()).sum());
+        version.setChaptersPayload(writeJson(chapters));
+        version.setCreatedAt(LocalDateTime.now());
+        workSnapshotVersionMapper.insert(version);
+
+        pruneOldVersions(userId, request.getFrontendWorkId());
+    }
+
+    private void pruneOldVersions(UUID userId, String frontendWorkId) {
+        LambdaQueryWrapper<WorkSnapshotVersion> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(WorkSnapshotVersion::getUserId, userId)
+                .eq(WorkSnapshotVersion::getFrontendWorkId, frontendWorkId)
+                .orderByDesc(WorkSnapshotVersion::getCreatedAt);
+        List<WorkSnapshotVersion> versions = workSnapshotVersionMapper.selectList(wrapper);
+        if (versions.size() <= 20) {
+            return;
+        }
+        versions.stream()
+                .skip(20)
+                .forEach(version -> workSnapshotVersionMapper.deleteById(version.getId()));
+    }
+
+    private WorkSnapshotVersionResponse toVersionResponse(WorkSnapshotVersion version) {
+        WorkSnapshotVersionResponse response = new WorkSnapshotVersionResponse();
+        response.setVersionId(version.getId());
+        response.setNovelId(version.getNovelId());
+        response.setFrontendWorkId(version.getFrontendWorkId());
+        response.setTitle(version.getTitle());
+        response.setPayload(version.getPayload());
+        response.setChapters(readChapters(version.getChaptersPayload()));
+        response.setChapterCount(version.getChapterCount());
+        response.setWordCount(version.getWordCount());
+        response.setCreatedAt(version.getCreatedAt());
+        response.setUpdatedAt(version.getCreatedAt());
+        return response;
+    }
+
+    private String writeJson(List<WorkChapterSnapshot> chapters) {
+        try {
+            return objectMapper.writeValueAsString(chapters);
+        } catch (Exception e) {
+            return "[]";
+        }
+    }
+
+    private List<WorkChapterSnapshot> readChapters(String chaptersPayload) {
+        if (isBlank(chaptersPayload)) {
+            return List.of();
+        }
+        try {
+            return objectMapper.readValue(chaptersPayload, new TypeReference<List<WorkChapterSnapshot>>() {});
+        } catch (Exception e) {
+            return List.of();
+        }
     }
 
     private static class ChapterSnapshotNormalizer implements java.util.function.Function<WorkChapterSnapshot, WorkChapterSnapshot> {

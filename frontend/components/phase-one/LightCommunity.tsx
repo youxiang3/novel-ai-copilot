@@ -18,6 +18,9 @@ import type { CommunityPost, CommunityPostType } from './types'
 import { cn } from '@/lib/utils'
 
 const favoriteStorageKey = 'yixie-community-favorites-v1'
+const likedStorageKey = 'yixie-community-likes-v1'
+const followStorageKey = 'yixie-community-follows-v1'
+const commentStorageKey = 'yixie-community-comments-v1'
 
 const typeLabels: Record<CommunityPostType | 'all', string> = {
   all: '全部',
@@ -127,14 +130,22 @@ export function LightCommunity({
   const [sort, setSort] = useState<'latest' | 'hot'>('latest')
   const [favorites, setFavorites] = useState<string[]>([])
   const [likedIds, setLikedIds] = useState<string[]>([])
+  const [followedAuthors, setFollowedAuthors] = useState<string[]>([])
+  const [commentsByPost, setCommentsByPost] = useState<Record<string, string[]>>({})
   const [selectedPost, setSelectedPost] = useState<CommunityPost | null>(null)
   const [notice, setNotice] = useState<{ title: string; message: string } | null>(null)
 
   useEffect(() => {
     try {
       setFavorites(JSON.parse(localStorage.getItem(favoriteStorageKey) || '[]') as string[])
+      setLikedIds(JSON.parse(localStorage.getItem(likedStorageKey) || '[]') as string[])
+      setFollowedAuthors(JSON.parse(localStorage.getItem(followStorageKey) || '[]') as string[])
+      setCommentsByPost(JSON.parse(localStorage.getItem(commentStorageKey) || '{}') as Record<string, string[]>)
     } catch {
       localStorage.removeItem(favoriteStorageKey)
+      localStorage.removeItem(likedStorageKey)
+      localStorage.removeItem(followStorageKey)
+      localStorage.removeItem(commentStorageKey)
     }
   }, [])
 
@@ -167,9 +178,30 @@ export function LightCommunity({
   function toggleLike(post: CommunityPost) {
     setLikedIds((current) => {
       const next = current.includes(post.id) ? current.filter((id) => id !== post.id) : [...current, post.id]
-      setNotice({ title: next.includes(post.id) ? '已点赞' : '已取消点赞', message: '点赞目前是前端占位计数，后续可接入社区服务。' })
+      localStorage.setItem(likedStorageKey, JSON.stringify(next))
+      setNotice({ title: next.includes(post.id) ? '已点赞' : '已取消点赞', message: '点赞当前保存在本地浏览器，未公开到真实社区。' })
       return next
     })
+  }
+
+  function toggleFollow(author: string) {
+    setFollowedAuthors((current) => {
+      const next = current.includes(author) ? current.filter((item) => item !== author) : [...current, author]
+      localStorage.setItem(followStorageKey, JSON.stringify(next))
+      setNotice({ title: next.includes(author) ? '已关注作者' : '已取消关注', message: '关注关系当前保存在本地浏览器，未公开到真实社区。' })
+      return next
+    })
+  }
+
+  function addLocalComment(postId: string, text: string) {
+    const content = text.trim()
+    if (!content) return
+    setCommentsByPost((current) => {
+      const next = { ...current, [postId]: [`我：${content}`, ...(current[postId] || [])].slice(0, 20) }
+      localStorage.setItem(commentStorageKey, JSON.stringify(next))
+      return next
+    })
+    setNotice({ title: '评论已保存', message: '这条评论当前仅保存在本地体验区，未公开发布。' })
   }
 
   async function copyPrompt(post: CommunityPost) {
@@ -184,13 +216,12 @@ export function LightCommunity({
 
   function openCommentPlaceholder(post: CommunityPost) {
     setSelectedPost(post)
-    setNotice({ title: '评论占位', message: '本轮只保留评论入口，不实现评论流、回复和关注体系。' })
   }
 
   const favoriteCount = favorites.length
 
   return (
-    <div className="min-h-full bg-[#f7f9ff] p-8">
+    <div className="yixie-editorial min-h-full bg-[#edf1ee] p-8">
       <div className="mx-auto grid max-w-[1500px] grid-cols-[minmax(0,1fr)_320px] gap-6">
         <section className="min-w-0 space-y-5">
           <div className="overflow-hidden rounded-lg border border-violet-100 bg-gradient-to-r from-white via-violet-50 to-blue-50 p-8 shadow-sm">
@@ -359,9 +390,13 @@ export function LightCommunity({
       <PostDetail
         post={selectedPost}
         saved={selectedPost ? favorites.includes(selectedPost.id) : false}
+        followed={selectedPost ? followedAuthors.includes(selectedPost.author) : false}
+        comments={selectedPost ? commentsByPost[selectedPost.id] || [] : []}
         onClose={() => setSelectedPost(null)}
         onCopy={copyPrompt}
         onFavorite={toggleFavorite}
+        onFollow={toggleFollow}
+        onComment={addLocalComment}
         onOpenSkills={onOpenSkills}
       />
       <NoticeDialog notice={notice} onClose={() => setNotice(null)} />
@@ -390,28 +425,40 @@ function SidePanel({ title, children }: { title: string; children: React.ReactNo
 function PostDetail({
   post,
   saved,
+  followed,
+  comments,
   onClose,
   onCopy,
   onFavorite,
+  onFollow,
+  onComment,
   onOpenSkills,
 }: {
   post: CommunityPost | null
   saved: boolean
+  followed: boolean
+  comments: string[]
   onClose: () => void
   onCopy: (post: CommunityPost) => void
   onFavorite: (post: CommunityPost) => void
+  onFollow: (author: string) => void
+  onComment: (postId: string, text: string) => void
   onOpenSkills: () => void
 }) {
+  const [commentDraft, setCommentDraft] = useState('')
   if (!post) return null
 
   return (
     <div className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-950/35 p-6 backdrop-blur-sm">
-      <section className="w-full max-w-3xl rounded-lg bg-white p-6 shadow-2xl">
+      <section className="yixie-editorial max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-lg bg-white p-6 shadow-2xl">
         <div className="flex items-start justify-between gap-4">
           <div>
             <span className={cn('rounded-full px-2.5 py-1 text-xs font-semibold', postTypeStyles[post.type])}>{typeLabels[post.type]}</span>
             <h2 className="mt-3 text-2xl font-bold text-slate-950">{post.title}</h2>
             <p className="mt-2 text-sm text-slate-500">{post.author} · {post.createdAt}</p>
+            <button onClick={() => onFollow(post.author)} className="mt-3 rounded-md border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50">
+              {followed ? '已关注' : '关注作者'}
+            </button>
           </div>
           <button onClick={onClose} className="rounded-md p-2 text-slate-500 hover:bg-slate-100" aria-label="关闭">
             <X className="h-5 w-5" />
@@ -431,6 +478,21 @@ function PostDetail({
             <span key={tag} className="rounded-full bg-blue-50 px-2.5 py-1 text-xs text-blue-700">{tag}</span>
           ))}
         </div>
+
+        <section className="mt-5 rounded-md border border-slate-200 bg-slate-50 p-4">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-semibold text-slate-900">本地评论</h3>
+            <span className="text-xs text-slate-500">未公开发布</span>
+          </div>
+          <div className="mt-3 flex gap-2">
+            <input value={commentDraft} onChange={(event) => setCommentDraft(event.target.value)} className="h-10 min-w-0 flex-1 rounded-md border border-slate-200 bg-white px-3 text-sm outline-none focus:ring-4 focus:ring-blue-100" placeholder="写一条本地评论..." />
+            <button onClick={() => { onComment(post.id, commentDraft); setCommentDraft('') }} className="rounded-md bg-blue-600 px-4 text-sm font-semibold text-white hover:bg-blue-500">评论</button>
+          </div>
+          <div className="mt-3 space-y-2">
+            {comments.map((comment, index) => <p key={`${comment}-${index}`} className="rounded bg-white px-3 py-2 text-sm text-slate-600">{comment}</p>)}
+            {comments.length === 0 && <p className="text-sm text-slate-500">还没有本地评论。</p>}
+          </div>
+        </section>
 
         <div className="mt-6 flex justify-end gap-3">
           {post.prompt && (

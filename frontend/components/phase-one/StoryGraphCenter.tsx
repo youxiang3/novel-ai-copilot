@@ -215,7 +215,7 @@ export function StoryGraphCenter({
 
   if (!selectedWork || !data) {
     return (
-      <div className="flex min-h-full items-center justify-center bg-[#f7f9fc] p-8">
+      <div className="yixie-editorial flex min-h-full items-center justify-center bg-[#edf1ee] p-8">
         <section className="w-full max-w-md rounded-md border border-slate-200 bg-white p-8 text-center shadow-sm">
           <Network className="mx-auto h-10 w-10 text-violet-600" />
           <h1 className="mt-4 text-xl font-semibold text-slate-950">先选择一部作品</h1>
@@ -227,7 +227,7 @@ export function StoryGraphCenter({
   }
 
   return (
-    <div className="min-h-full bg-[#f7f9fc]">
+    <div className="yixie-editorial min-h-full bg-[#edf1ee]">
       <div className="grid min-h-full grid-cols-[minmax(0,1fr)_340px] gap-5 p-5">
         <main className="min-w-0">
           {isGuest && <div className="mb-4 rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">游客模式下故事线图数据保存到本地，不会显示为云端同步。</div>}

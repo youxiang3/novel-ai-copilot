@@ -12,7 +12,7 @@ import { AppearanceSettingsPage, ExportCenterPage, ModelSettingsPage } from '@/c
 import { SkillPlaza } from '@/components/phase-one/SkillPlaza'
 import { SplashScreen } from '@/components/phase-one/SplashScreen'
 import { StoryGraphCenter } from '@/components/phase-one/StoryGraphCenter'
-import type { CreationMode, GuideDraft, OperationStatus, ParsedWorkResult, SavedWork, WorkChapter, WorkItem, WorkStatus, WorkspaceStep } from '@/components/phase-one/types'
+import type { CreationMode, GuideDraft, OperationStatus, ParsedWorkResult, SavedWork, WorkChapter, WorkItem, WorkStatus, WorkspaceStep, WorkVersionRecord } from '@/components/phase-one/types'
 import { WebAiPromptModal } from '@/components/phase-one/WebAiPromptModal'
 import { WorksHome } from '@/components/phase-one/WorksHome'
 import { WritingWorkspace } from '@/components/phase-one/WritingWorkspace'
@@ -34,6 +34,7 @@ type MigrationPrompt = {
 
 const accountStorageKey = 'yixie-local-accounts-v1'
 const worksStorageKey = 'yixie-works-library-v1'
+const workVersionStorageKey = 'yixie-work-version-history-v1'
 const backendTokenStorageKey = 'yixie-backend-token-v1'
 const backendApiBase = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8080'
 
@@ -102,6 +103,34 @@ function withChapterStats(work: SavedWork, markUpdated = false): SavedWork {
   }
 }
 
+function readWorkVersions(): WorkVersionRecord[] {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(workVersionStorageKey) || '[]')
+    return Array.isArray(parsed) ? parsed : []
+  } catch {
+    localStorage.removeItem(workVersionStorageKey)
+    return []
+  }
+}
+
+function writeWorkVersions(records: WorkVersionRecord[]) {
+  localStorage.setItem(workVersionStorageKey, JSON.stringify(records.slice(0, 80)))
+}
+
+function createWorkVersion(work: SavedWork, source: WorkVersionRecord['source']): WorkVersionRecord {
+  const snapshot = withChapterStats(work)
+  return {
+    id: `version-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    workId: snapshot.id,
+    title: snapshot.title,
+    source,
+    createdAt: new Date().toLocaleString(),
+    wordCount: snapshot.words,
+    chapterCount: snapshot.chapterCount || normalizeWorkChapters(snapshot).length,
+    snapshot,
+  }
+}
+
 const emptyGuideDraft: GuideDraft = {
   title: '',
   idea: '',
@@ -127,6 +156,7 @@ export default function Home() {
   const [authError, setAuthError] = useState('')
   const [works, setWorks] = useState<SavedWork[]>([])
   const [worksHydrated, setWorksHydrated] = useState(false)
+  const [versionRecords, setVersionRecords] = useState<WorkVersionRecord[]>([])
   const [guideDraft, setGuideDraft] = useState<GuideDraft>(emptyGuideDraft)
   const [guideStep, setGuideStep] = useState<WorkspaceStep>('idea')
   const [parsedResult, setParsedResult] = useState<ParsedWorkResult | null>(null)
@@ -154,6 +184,10 @@ export default function Home() {
     } finally {
       setWorksHydrated(true)
     }
+  }, [])
+
+  useEffect(() => {
+    setVersionRecords(readWorkVersions())
   }, [])
 
   useEffect(() => {
@@ -693,6 +727,63 @@ export default function Home() {
     }
   }
 
+  function recordVersion(work: SavedWork, source: WorkVersionRecord['source']) {
+    const nextRecord = createWorkVersion(work, source)
+    const nextRecords = [
+      nextRecord,
+      ...versionRecords.filter((record) => !(record.workId === work.id && record.wordCount === nextRecord.wordCount && record.chapterCount === nextRecord.chapterCount)).slice(0, 79),
+    ]
+    setVersionRecords(nextRecords)
+    writeWorkVersions(nextRecords)
+    return nextRecord
+  }
+
+  function createManualVersionSnapshot() {
+    if (!activeWork) return
+    recordVersion(activeWork, 'manual-snapshot')
+    setFeedback('success', '已为当前作品保留一个本地版本快照，可在工作台恢复为新副本。')
+  }
+
+  async function syncActiveWorkSnapshot() {
+    if (!activeWork) return
+    if (!backendToken) {
+      recordVersion(activeWork, 'manual-snapshot')
+      setFeedback('error', '当前未连接后端作品库，已保留本地版本；登录后可再手动同步。')
+      return
+    }
+    const nextWork = withChapterStats({ ...activeWork, status: 'official', syncState: 'syncing' }, true)
+    setActiveWork(nextWork)
+    upsertWork(nextWork)
+    await saveWorkSnapshotToBackend(nextWork, backendToken)
+    const syncedWork = withChapterStats({ ...nextWork, syncState: 'synced', tags: ['正式作品', '后端快照已更新'] })
+    setActiveWork(syncedWork)
+    upsertWork(syncedWork)
+    recordVersion(syncedWork, 'manual-snapshot')
+    setFeedback('success', '已手动同步到后端作品快照；后端不可用时仍保留本地工作台数据。')
+  }
+
+  function restoreVersionAsCopy(record: WorkVersionRecord) {
+    const copy = withChapterStats({
+      ...record.snapshot,
+      id: `work-${Date.now()}`,
+      title: `${record.snapshot.title} · 恢复副本`,
+      status: 'local-draft',
+      syncState: 'local-only',
+      tags: ['版本恢复', '本地副本'],
+      createdAt: new Date().toLocaleString(),
+      updatedAt: '刚刚',
+    }, true)
+    const version = createWorkVersion(copy, 'restore-copy')
+    const nextRecords = [version, ...versionRecords].slice(0, 80)
+    setVersionRecords(nextRecords)
+    writeWorkVersions(nextRecords)
+    setWorks((current) => [copy, ...current])
+    setActiveWork(copy)
+    setWorkspaceView('editor')
+    setScreen('workspace')
+    setFeedback('success', '已将该版本恢复为新的本地副本，没有覆盖原作品。')
+  }
+
   function parseBackendWork(payload: string, backendChapters?: WorkSnapshotChapter[]): SavedWork | null {
     try {
       const parsed = JSON.parse(payload) as SavedWork
@@ -738,6 +829,7 @@ export default function Home() {
     }, true)
     setActiveWork(nextWork)
     upsertWork(nextWork)
+    recordVersion(nextWork, 'manual-save')
     setFeedback('success', activeWork.status === 'local-draft' ? '临时草稿已保存到本地，作品统计已更新。' : '作品已保存，字数和章节统计已更新。')
   }
 
@@ -944,7 +1036,7 @@ export default function Home() {
   if (screen === 'export') {
     return (
       <>
-        {renderShell(<ExportCenterPage work={activeWork} isGuest={isGuest} onRequireLogin={() => openAuth('login')} />, 'export')}
+        {renderShell(<ExportCenterPage work={activeWork} token={backendToken} isGuest={isGuest} onRequireLogin={() => openAuth('login')} onRestoreWork={handleCreateWorkFromLibrary} />, 'export')}
         {sharedModals}
       </>
     )
@@ -1007,6 +1099,11 @@ export default function Home() {
             onOpenStoryGraph={() => setScreen('story-graph')}
             onWorkChange={updateActiveWorkDraft}
             onSave={saveActiveWork}
+            backendToken={backendToken}
+            versionRecords={versionRecords.filter((record) => record.workId === activeWork.id)}
+            onCreateVersion={createManualVersionSnapshot}
+            onRestoreVersion={restoreVersionAsCopy}
+            onManualSync={syncActiveWorkSnapshot}
           />,
           'create',
         )}

@@ -214,7 +214,7 @@ export function SkillPlaza({
   }
 
   return (
-    <div className="grid min-h-[calc(100vh-5rem)] grid-cols-[minmax(0,1fr)_300px] gap-6 p-8">
+    <div className="yixie-editorial grid min-h-[calc(100vh-5rem)] grid-cols-[minmax(0,1fr)_300px] gap-6 bg-[#edf1ee] p-8">
       <section className="min-w-0">
         <div className="flex items-start justify-between gap-6">
           <div>

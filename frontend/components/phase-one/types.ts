@@ -98,6 +98,17 @@ export interface SavedWork extends WorkItem {
   }
 }
 
+export interface WorkVersionRecord {
+  id: string
+  workId: string
+  title: string
+  source: 'manual-save' | 'manual-snapshot' | 'restore-copy'
+  createdAt: string
+  wordCount: number
+  chapterCount: number
+  snapshot: SavedWork
+}
+
 export interface WorkChapter {
   id: string
   chapterNumber: number
