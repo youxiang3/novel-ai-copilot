@@ -3,9 +3,9 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "dev": "\"D:\\nvm\\v20.20.2\\node.exe\" node_modules/next/dist/bin/next dev",
-    "build": "\"D:\\nvm\\v20.20.2\\node.exe\" node_modules/next/dist/bin/next build",
-    "start": "\"D:\\nvm\\v20.20.2\\node.exe\" node_modules/next/dist/bin/next start",
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
     "lint": "next lint"
   },
   "dependencies": {

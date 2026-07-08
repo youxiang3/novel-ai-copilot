@@ -86,6 +86,7 @@ export interface GuideDraft {
 }
 
 export interface SavedWork extends WorkItem {
+  backendNovelId?: string
   chapterTitle: string
   chapterText: string
   chapters?: WorkChapter[]
@@ -246,6 +247,16 @@ export interface CheckIssue {
   description: string
   suggestion: string
   status: IssueStatus
+  dimension?: string
+  level?: IssueSeverity
+  title?: string
+  evidence?: string
+  excerpt?: string
+  reason?: string
+  suggestionText?: string
+  priority?: number
+  confidence?: number
+  source?: string
 }
 
 export interface SkillTemplate {

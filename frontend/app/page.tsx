@@ -24,7 +24,7 @@ type LocalAccount = { username: string; account: string; password: string }
 type BackendSession = { token: string; username: string }
 type BackendResult<T> = { code: number; message: string; data: T }
 type WorkSnapshotChapter = { frontendChapterId?: string; chapterNumber?: number; title?: string; content?: string; status?: string }
-type WorkSnapshotResponse = { frontendWorkId: string; payload: string; chapters?: WorkSnapshotChapter[] }
+type WorkSnapshotResponse = { novelId?: string; chapterId?: string; frontendWorkId: string; payload: string; chapters?: WorkSnapshotChapter[] }
 type MigrationPrompt = {
   token: string
   backendWorks: SavedWork[]
@@ -87,9 +87,8 @@ function normalizeWorkChapter(chapter: Partial<WorkChapter>, index: number): Wor
 function withChapterStats(work: SavedWork, markUpdated = false): SavedWork {
   const chapters = normalizeWorkChapters(work)
   const words = chapters.reduce((sum, chapter) => sum + countChapterWords(chapter.content), 0)
-  const hasChapter = chapters.some((chapter) => chapter.content.trim())
   const chapterCount = chapters.length
-  const monthlyUpdatedChapters = hasChapter && markUpdated ? Math.max(1, work.monthlyUpdatedChapters || 0) : Math.max(0, work.monthlyUpdatedChapters || 0)
+  const monthlyUpdatedChapters = chapters.filter((chapter) => chapter.status === 'published').length
 
   return {
     ...work,
@@ -615,18 +614,23 @@ export default function Home() {
     setBackendAutoSaveEnabled(true)
   }
 
-  function handleMigrationChoice(choice: 'upload' | 'backend-only' | 'later') {
+  async function handleMigrationChoice(choice: 'upload' | 'backend-only' | 'later') {
     if (!migrationPrompt) return
     const { token, backendWorks } = migrationPrompt
     if (choice === 'upload') {
-      const officialWorks = works.filter((work) => work.status === 'official')
-      setWorks((current) => mergeWorks(current, backendWorks))
-      officialWorks.forEach((work) => {
-        void saveWorkSnapshotToBackend(work, token)
+      const officialWorks = works.filter((work) => work.status === 'official').map((work) => withChapterStats(work, true))
+      setFeedback('loading', `正在上传 ${officialWorks.length} 个本地正式作品...`)
+      const savedWorks = (await Promise.all(officialWorks.map((work) => saveWorkSnapshotToBackend(work, token)))).filter((work): work is SavedWork => Boolean(work))
+      const worksToMerge = savedWorks.length > 0 ? savedWorks : officialWorks
+      setWorks((current) => mergeWorks(current, mergeWorks(backendWorks, worksToMerge)))
+      setActiveWork((current) => {
+        if (!current) return current
+        const synced = savedWorks.find((work) => work.id === current.id)
+        return synced ? withChapterStats(synced) : current
       })
       setBackendAutoSaveEnabled(true)
       setMigrationPrompt(null)
-      setFeedback('success', `已上传 ${officialWorks.length} 个本地正式作品，临时草稿仍仅保存在本地。`)
+      setFeedback(savedWorks.length === officialWorks.length ? 'success' : 'error', `已尝试上传 ${officialWorks.length} 个本地正式作品，成功 ${savedWorks.length} 个；临时草稿仍仅保存在本地。`)
       return
     }
     if (choice === 'backend-only') {
@@ -678,18 +682,18 @@ export default function Home() {
       const result = await response.json() as BackendResult<WorkSnapshotResponse[]>
       if (result.code !== 200 || !Array.isArray(result.data)) return []
       return result.data
-        .map((snapshot) => parseBackendWork(snapshot.payload, snapshot.chapters))
+        .map((snapshot) => parseBackendWork(snapshot.payload, snapshot.chapters, snapshot.novelId))
         .filter((work): work is SavedWork => Boolean(work))
     } catch {
       return []
     }
   }
 
-  async function saveWorkSnapshotToBackend(work: SavedWork, token: string) {
+  async function saveWorkSnapshotToBackend(work: SavedWork, token: string): Promise<SavedWork | null> {
     const chapters = normalizeWorkChapters(work)
     const payload = JSON.stringify({ ...work, chapters })
     try {
-      await fetch(`${backendApiBase}/api/work-library`, {
+      const response = await fetch(`${backendApiBase}/api/work-library`, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${token}`,
@@ -711,8 +715,16 @@ export default function Home() {
           payload,
         }),
       })
+      if (!response.ok) return null
+      const result = await response.json() as BackendResult<WorkSnapshotResponse>
+      if (result.code !== 200 || !result.data?.novelId) return null
+      return {
+        ...work,
+        backendNovelId: result.data.novelId,
+      }
     } catch {
       // 后端不可用时保留前端 localStorage 闭环。
+      return null
     }
   }
 
@@ -784,7 +796,7 @@ export default function Home() {
     setFeedback('success', '已将该版本恢复为新的本地副本，没有覆盖原作品。')
   }
 
-  function parseBackendWork(payload: string, backendChapters?: WorkSnapshotChapter[]): SavedWork | null {
+  function parseBackendWork(payload: string, backendChapters?: WorkSnapshotChapter[], backendNovelId?: string): SavedWork | null {
     try {
       const parsed = JSON.parse(payload) as SavedWork
       if (!parsed?.id || !parsed?.title) return null
@@ -804,6 +816,7 @@ export default function Home() {
         chapterText: typeof chapters[0]?.content === 'string' ? chapters[0].content : parsed.chapterText,
         status: 'official',
         syncState: 'synced',
+        backendNovelId: backendNovelId || parsed.backendNovelId,
         tags: Array.isArray(parsed.tags) ? parsed.tags : ['正式作品', '后端已保存'],
       })
     } catch {
@@ -820,7 +833,7 @@ export default function Home() {
     return Array.from(byId.values())
   }
 
-  function saveActiveWork() {
+  async function saveActiveWork() {
     if (!activeWork) return
     const nextWork: SavedWork = withChapterStats({
       ...activeWork,
@@ -830,6 +843,15 @@ export default function Home() {
     setActiveWork(nextWork)
     upsertWork(nextWork)
     recordVersion(nextWork, 'manual-save')
+    if (nextWork.status === 'official' && backendToken) {
+      const backendWork = await saveWorkSnapshotToBackend(nextWork, backendToken)
+      if (backendWork) {
+        setActiveWork(backendWork)
+        upsertWork(backendWork)
+        setFeedback('success', '作品已保存，字数、章节统计和后端快照已同步。')
+        return
+      }
+    }
     setFeedback('success', activeWork.status === 'local-draft' ? '临时草稿已保存到本地，作品统计已更新。' : '作品已保存，字数和章节统计已更新。')
   }
 
