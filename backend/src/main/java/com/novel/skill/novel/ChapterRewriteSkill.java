@@ -1,6 +1,7 @@
 package com.novel.skill.novel;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.novel.dto.AiCallResult;
 import com.novel.dto.ChapterRewriteRequest;
 import com.novel.dto.ChapterRewriteResult;
 import com.novel.entity.AIGenerationLog;
@@ -9,10 +10,12 @@ import com.novel.service.AiService;
 import com.novel.skill.NovelSkill;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
+import reactor.core.publisher.Flux;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 @Component
 @RequiredArgsConstructor
@@ -31,10 +34,30 @@ public class ChapterRewriteSkill implements NovelSkill<ChapterRewriteRequest, Ch
     public ChapterRewriteResult execute(ChapterRewriteRequest input) {
         validateRequest(input);
         String prompt = buildPrompt(input);
-        String response = aiService.call(prompt);
-        ChapterRewriteResult result = parseResult(response);
-        saveGenerationLog(input, prompt, response, result);
-        return result;
+        try {
+            AiCallResult aiResult = aiService.callWithUsage(prompt);
+            String response = aiResult.getContent();
+            ChapterRewriteResult result = parseResult(response);
+            saveGenerationLog(input, prompt, response, result, aiResult);
+            return result;
+        } catch (RuntimeException error) {
+            saveFailureLog(input, prompt, error);
+            throw error;
+        }
+    }
+
+    public Flux<String> stream(ChapterRewriteRequest input) {
+        validateRequest(input);
+        String prompt = buildPrompt(input);
+        StringBuilder responseBuilder = new StringBuilder();
+        return aiService.streamCall(prompt)
+                .doOnNext(responseBuilder::append)
+                .doOnComplete(() -> {
+                    String response = responseBuilder.toString();
+                    ChapterRewriteResult result = parseResult(response);
+                    saveGenerationLog(input, prompt, response, result);
+                })
+                .doOnError(error -> saveFailureLog(input, prompt, error));
     }
 
     private void validateRequest(ChapterRewriteRequest input) {
@@ -138,6 +161,10 @@ public class ChapterRewriteSkill implements NovelSkill<ChapterRewriteRequest, Ch
     }
 
     private void saveGenerationLog(ChapterRewriteRequest input, String prompt, String response, ChapterRewriteResult result) {
+        saveGenerationLog(input, prompt, response, result, null);
+    }
+
+    private void saveGenerationLog(ChapterRewriteRequest input, String prompt, String response, ChapterRewriteResult result, AiCallResult aiResult) {
         if (input.getNovelId() == null) {
             return;
         }
@@ -148,8 +175,8 @@ public class ChapterRewriteSkill implements NovelSkill<ChapterRewriteRequest, Ch
             log.setWorkflowType("chapter_rewrite");
             log.setPromptSnapshot(trimToLimit(prompt, 12000));
             log.setResponseSnapshot(trimToLimit(response, 12000));
-            log.setModelName(firstNonBlank(result.getMode(), "model-api"));
-            log.setTokenUsage(estimateTokenUsage(prompt, response));
+            log.setModelName(firstNonBlank(aiResult == null ? "" : aiResult.getModelName(), result.getMode(), "model-api"));
+            log.setTokenUsage(resolveTokenUsage(aiResult, prompt, response));
             log.setCreateTime(LocalDateTime.now());
             aiGenerationLogMapper.insert(log);
         } catch (Exception ignored) {
@@ -157,10 +184,78 @@ public class ChapterRewriteSkill implements NovelSkill<ChapterRewriteRequest, Ch
         }
     }
 
+    private void saveFailureLog(ChapterRewriteRequest input, String prompt, Throwable error) {
+        if (input == null || input.getNovelId() == null) {
+            return;
+        }
+        try {
+            String message = error == null || error.getMessage() == null ? "unknown error" : error.getMessage();
+            String errorCode = classifyErrorCode(message);
+            String response = buildFailureResponse(message, errorCode);
+            AIGenerationLog log = new AIGenerationLog();
+            log.setNovelId(input.getNovelId());
+            log.setChapterId(input.getChapterId());
+            log.setWorkflowType("chapter_rewrite");
+            log.setPromptSnapshot(trimToLimit(prompt, 12000));
+            log.setResponseSnapshot(trimToLimit(response, 12000));
+            log.setModelName("model-api-error");
+            log.setTokenUsage(estimateTokenUsage(prompt, message));
+            log.setCreateTime(LocalDateTime.now());
+            aiGenerationLogMapper.insert(log);
+        } catch (Exception ignored) {
+            // Failure logging must never hide the original model/API error.
+        }
+    }
+
+    private String buildFailureResponse(String message, String errorCode) {
+        try {
+            return objectMapper.writeValueAsString(Map.of(
+                    "mode", "model-api-error",
+                    "errorCode", errorCode,
+                    "errorType", errorCode,
+                    "replacementText", "",
+                    "conservativeText", "",
+                    "riskNotes", List.of("模型调用失败：" + trimToLimit(message, 500))
+            ));
+        } catch (Exception ignored) {
+            return "{\"mode\":\"model-api-error\",\"errorCode\":\"MODEL_CALL_FAILED\",\"errorType\":\"MODEL_CALL_FAILED\",\"riskNotes\":[\"模型调用失败\"]}";
+        }
+    }
+
+    private String classifyErrorCode(String message) {
+        String text = message == null ? "" : message.toLowerCase();
+        if (text.contains("timeout") || text.contains("timed out") || text.contains("超时")) {
+            return "MODEL_TIMEOUT";
+        }
+        if (text.contains("429") || text.contains("rate limit") || text.contains("too many requests") || text.contains("限流")) {
+            return "MODEL_RATE_LIMIT";
+        }
+        if (text.contains("401") || text.contains("403") || text.contains("unauthorized") || text.contains("forbidden") || text.contains("api key") || text.contains("鉴权")) {
+            return "MODEL_AUTH_FAILED";
+        }
+        if (text.contains("config") || text.contains("not configured") || text.contains("未配置")) {
+            return "MODEL_CONFIG_MISSING";
+        }
+        if (text.contains("connect") || text.contains("connection") || text.contains("network") || text.contains("dns") || text.contains("网络")) {
+            return "MODEL_NETWORK_ERROR";
+        }
+        if (text.contains("parse") || text.contains("json") || text.contains("解析")) {
+            return "MODEL_RESPONSE_PARSE_ERROR";
+        }
+        return "MODEL_CALL_FAILED";
+    }
+
     private int estimateTokenUsage(String prompt, String response) {
         int promptLength = prompt == null ? 0 : prompt.length();
         int responseLength = response == null ? 0 : response.length();
         return Math.max(1, (promptLength + responseLength + 3) / 4);
+    }
+
+    private int resolveTokenUsage(AiCallResult aiResult, String prompt, String response) {
+        if (aiResult != null && aiResult.getTotalTokens() != null && aiResult.getTotalTokens() > 0) {
+            return aiResult.getTotalTokens();
+        }
+        return estimateTokenUsage(prompt, response);
     }
 
     private String extractJson(String value) {

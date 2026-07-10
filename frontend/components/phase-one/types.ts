@@ -18,6 +18,7 @@ export type AppTheme = 'blue' | 'green' | 'paper' | 'dark'
 export type ExportFormat = 'txt' | 'markdown' | 'docx' | 'pdf' | 'epub' | 'more'
 export type ExportScope = 'current' | 'selected' | 'all'
 export type CommunityPostType = 'inspiration' | 'prompt' | 'skill'
+export type ChapterTaskStatus = 'draft' | 'active' | 'completed'
 
 export interface WorkItem {
   id: string
@@ -90,6 +91,7 @@ export interface SavedWork extends WorkItem {
   chapterTitle: string
   chapterText: string
   chapters?: WorkChapter[]
+  chapterTasks?: ChapterTask[]
   materials: {
     genre: string
     sellingPoint: string
@@ -97,6 +99,28 @@ export interface SavedWork extends WorkItem {
     summary: string
     nextStep: string
   }
+}
+
+export interface ChapterTask {
+  id: string
+  backendTaskId?: string
+  chapterId: string
+  versionNumber?: number
+  parentTaskId?: string
+  status: ChapterTaskStatus
+  titleCandidates: string[]
+  coreGoal: string
+  emotionGoal: string
+  targetWords: number
+  storyline: string
+  volumeNode: string
+  mustDo: string[]
+  forbidden: string[]
+  rhythmSteps: string[]
+  source: 'user' | 'local' | 'model-api'
+  sourceBasis?: string[]
+  createdAt: string
+  updatedAt: string
 }
 
 export interface WorkVersionRecord {
@@ -112,6 +136,7 @@ export interface WorkVersionRecord {
 
 export interface WorkChapter {
   id: string
+  backendChapterId?: string
   chapterNumber: number
   title: string
   content: string
@@ -241,6 +266,7 @@ export interface MemoryEntry {
 
 export interface CheckIssue {
   id: string
+  runId?: string
   issueType: CheckIssueType
   severity: IssueSeverity
   position: string
@@ -257,6 +283,8 @@ export interface CheckIssue {
   priority?: number
   confidence?: number
   source?: string
+  createdAt?: string
+  updatedAt?: string
 }
 
 export interface SkillTemplate {

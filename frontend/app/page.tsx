@@ -23,7 +23,7 @@ type WorkspaceView = 'overview' | 'editor' | 'lore' | 'memory' | 'checks'
 type LocalAccount = { username: string; account: string; password: string }
 type BackendSession = { token: string; username: string }
 type BackendResult<T> = { code: number; message: string; data: T }
-type WorkSnapshotChapter = { frontendChapterId?: string; chapterNumber?: number; title?: string; content?: string; status?: string }
+type WorkSnapshotChapter = { frontendChapterId?: string; backendChapterId?: string; chapterNumber?: number; title?: string; content?: string; status?: string }
 type WorkSnapshotResponse = { novelId?: string; chapterId?: string; frontendWorkId: string; payload: string; chapters?: WorkSnapshotChapter[] }
 type MigrationPrompt = {
   token: string
@@ -74,6 +74,7 @@ function normalizeWorkChapter(chapter: Partial<WorkChapter>, index: number): Wor
   const content = typeof chapter.content === 'string' ? chapter.content : ''
   return {
     id: chapter.id || `chapter-${index + 1}`,
+    backendChapterId: chapter.backendChapterId,
     chapterNumber: Number.isFinite(chapter.chapterNumber) && Number(chapter.chapterNumber) > 0 ? Number(chapter.chapterNumber) : index + 1,
     title: chapter.title || `第 ${index + 1} 章`,
     content,
@@ -707,6 +708,7 @@ export default function Home() {
           chapterText: work.chapterText,
           chapters: chapters.map((chapter) => ({
             frontendChapterId: chapter.id,
+            backendChapterId: chapter.backendChapterId,
             chapterNumber: chapter.chapterNumber,
             title: chapter.title,
             content: chapter.content,
@@ -718,13 +720,41 @@ export default function Home() {
       if (!response.ok) return null
       const result = await response.json() as BackendResult<WorkSnapshotResponse>
       if (result.code !== 200 || !result.data?.novelId) return null
-      return {
+      const syncedChapters = chapters.map((chapter) => {
+        const backendChapter = result.data.chapters?.find((item) => item.frontendChapterId === chapter.id)
+          ?? result.data.chapters?.find((item) => item.chapterNumber === chapter.chapterNumber)
+        return {
+          ...chapter,
+          backendChapterId: backendChapter?.backendChapterId || chapter.backendChapterId,
+        }
+      })
+      return withChapterStats({
         ...work,
         backendNovelId: result.data.novelId,
-      }
+        chapters: syncedChapters,
+      })
     } catch {
       // 后端不可用时保留前端 localStorage 闭环。
       return null
+    }
+  }
+
+  async function createBackendChapterVersion(chapter: WorkChapter, token: string, source: 'manual-save' | 'manual-snapshot' | 'ai-adopt', changeSummary: string) {
+    if (!chapter.backendChapterId) return false
+    try {
+      const response = await fetch(`${backendApiBase}/api/chapter/${encodeURIComponent(chapter.backendChapterId)}/versions`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ source, changeSummary }),
+      })
+      if (!response.ok) return false
+      const result = await response.json() as BackendResult<{ id?: string }>
+      return result.code === 200 && Boolean(result.data?.id)
+    } catch {
+      return false
     }
   }
 
@@ -800,15 +830,20 @@ export default function Home() {
     try {
       const parsed = JSON.parse(payload) as SavedWork
       if (!parsed?.id || !parsed?.title) return null
+      const parsedChapters = normalizeWorkChapters(parsed)
       const chapters = Array.isArray(backendChapters) && backendChapters.length > 0
-        ? backendChapters.map((chapter, index) => normalizeWorkChapter({
-          id: chapter.frontendChapterId || `chapter-${chapter.chapterNumber || index + 1}`,
-          chapterNumber: chapter.chapterNumber || index + 1,
-          title: chapter.title || `第 ${index + 1} 章`,
-          content: chapter.content || '',
-          status: chapter.status === 'published' ? 'published' : 'draft',
-        }, index))
-        : normalizeWorkChapters(parsed)
+        ? backendChapters.map((chapter, index) => {
+          const payloadChapter = parsedChapters.find((item) => item.chapterNumber === (chapter.chapterNumber || index + 1))
+          return normalizeWorkChapter({
+            id: chapter.frontendChapterId || payloadChapter?.id || `chapter-${chapter.chapterNumber || index + 1}`,
+            backendChapterId: chapter.backendChapterId || payloadChapter?.backendChapterId,
+            chapterNumber: chapter.chapterNumber || index + 1,
+            title: chapter.title || payloadChapter?.title || `第 ${index + 1} 章`,
+            content: chapter.content ?? payloadChapter?.content ?? '',
+            status: chapter.status === 'published' ? 'published' : 'draft',
+          }, index)
+        })
+        : parsedChapters
       return withChapterStats({
         ...parsed,
         chapters,
@@ -833,7 +868,7 @@ export default function Home() {
     return Array.from(byId.values())
   }
 
-  async function saveActiveWork() {
+  async function saveActiveWork(selectedChapter?: WorkChapter) {
     if (!activeWork) return
     const nextWork: SavedWork = withChapterStats({
       ...activeWork,
@@ -846,9 +881,17 @@ export default function Home() {
     if (nextWork.status === 'official' && backendToken) {
       const backendWork = await saveWorkSnapshotToBackend(nextWork, backendToken)
       if (backendWork) {
+        const syncedChapter = normalizeWorkChapters(backendWork).find((chapter) => chapter.id === selectedChapter?.id)
+          ?? normalizeWorkChapters(backendWork).find((chapter) => chapter.chapterNumber === selectedChapter?.chapterNumber)
+          ?? normalizeWorkChapters(backendWork)[0]
+        const chapterVersionSaved = syncedChapter
+          ? await createBackendChapterVersion(syncedChapter, backendToken, 'manual-save', '用户保存当前章节')
+          : false
         setActiveWork(backendWork)
         upsertWork(backendWork)
-        setFeedback('success', '作品已保存，字数、章节统计和后端快照已同步。')
+        setFeedback('success', chapterVersionSaved
+          ? '作品已保存，后端快照和当前章节版本已同步。'
+          : '作品已保存，字数、章节统计和后端快照已同步。')
         return
       }
     }
@@ -935,7 +978,7 @@ export default function Home() {
       <AuthModal open={authOpen} reason={authReason} loading={authLoading} error={authError} onClose={() => setAuthOpen(false)} onSubmit={handleAuthSubmit} />
       <MigrationConfirmDialog prompt={migrationPrompt} onChoose={handleMigrationChoice} />
       <FeedbackDialog toast={toast} onClose={() => setToast(null)} />
-      {screen !== 'splash' && (
+      {screen !== 'splash' && screen !== 'workspace' && (
         <CreativeAssistantPanel
           work={activeWork}
           token={backendToken}
@@ -1058,7 +1101,7 @@ export default function Home() {
   if (screen === 'export') {
     return (
       <>
-        {renderShell(<ExportCenterPage work={activeWork} token={backendToken} isGuest={isGuest} onRequireLogin={() => openAuth('login')} onRestoreWork={handleCreateWorkFromLibrary} />, 'export')}
+        {renderShell(<ExportCenterPage work={activeWork} token={backendToken} isGuest={isGuest} onRequireLogin={() => openAuth('login')} onRestoreWork={handleCreateWorkFromLibrary} onCloudSyncWork={handleUpdateWork} />, 'export')}
         {sharedModals}
       </>
     )
@@ -1111,24 +1154,23 @@ export default function Home() {
   if (screen === 'workspace' && activeWork) {
     return (
       <>
-        {renderShell(
-          <WritingWorkspace
-            work={activeWork}
-            status={status}
-            message={message}
-            initialView={workspaceView}
-            onBackHome={() => setScreen('home')}
-            onOpenStoryGraph={() => setScreen('story-graph')}
-            onWorkChange={updateActiveWorkDraft}
-            onSave={saveActiveWork}
-            backendToken={backendToken}
-            versionRecords={versionRecords.filter((record) => record.workId === activeWork.id)}
-            onCreateVersion={createManualVersionSnapshot}
-            onRestoreVersion={restoreVersionAsCopy}
-            onManualSync={syncActiveWorkSnapshot}
-          />,
-          'create',
-        )}
+        <WritingWorkspace
+          work={activeWork}
+          status={status}
+          message={message}
+          initialView={workspaceView}
+          onBackHome={() => setScreen('home')}
+          onOpenStoryGraph={() => setScreen('story-graph')}
+          onWorkChange={updateActiveWorkDraft}
+          onSave={saveActiveWork}
+          backendToken={backendToken}
+          versionRecords={versionRecords.filter((record) => record.workId === activeWork.id)}
+          onCreateVersion={createManualVersionSnapshot}
+          onRestoreVersion={restoreVersionAsCopy}
+          onManualSync={syncActiveWorkSnapshot}
+          works={sortedWorks}
+          onOpenWork={openWork}
+        />
         {sharedModals}
       </>
     )

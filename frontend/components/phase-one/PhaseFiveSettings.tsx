@@ -409,12 +409,14 @@ export function ExportCenterPage({
   isGuest,
   onRequireLogin,
   onRestoreWork,
+  onCloudSyncWork,
 }: {
   work: SavedWork | null
   token?: string
   isGuest: boolean
   onRequireLogin: () => void
   onRestoreWork?: (work: SavedWork) => void
+  onCloudSyncWork?: (work: SavedWork) => void
 }) {
   const [tab, setTab] = useState<'export' | 'backup' | 'publish'>('export')
   const [format, setFormat] = useState<ExportFormat>('txt')
@@ -551,6 +553,9 @@ export function ExportCenterPage({
       const result = await response.json().catch(() => null)
       if (!response.ok || result?.code !== 200) {
         throw new Error(result?.message || `HTTP ${response.status}`)
+      }
+      if (result?.data) {
+        onCloudSyncWork?.(mergeCloudSyncResult(exportWork, result.data as CloudSyncResponse))
       }
       const next = [`云端快照：${exportWork.title} · ${new Date().toLocaleString()}`, ...backupRecords].slice(0, 6)
       setBackupRecords(next)
@@ -997,6 +1002,7 @@ function buildCloudBackupPayload(work: SavedWork) {
       }]
   ).map((chapter, index) => ({
     frontendChapterId: chapter.id || `chapter-${index + 1}`,
+    backendChapterId: chapter.backendChapterId,
     chapterNumber: chapter.chapterNumber || index + 1,
     title: chapter.title || `第 ${index + 1} 章`,
     content: chapter.content || '',
@@ -1016,6 +1022,50 @@ function buildCloudBackupPayload(work: SavedWork) {
     chapters,
     chapterTitle: chapters[0]?.title || work.chapterTitle,
     chapterText: chapters[0]?.content || work.chapterText,
+  }
+}
+
+type CloudSyncResponse = {
+  novelId?: string
+  chapterId?: string
+  frontendWorkId?: string
+  chapters?: CloudSnapshotChapter[]
+  updatedAt?: string
+}
+
+function mergeCloudSyncResult(work: SavedWork, snapshot: CloudSyncResponse): SavedWork {
+  const responseChapters = Array.isArray(snapshot.chapters) ? snapshot.chapters : []
+  const backendIdByFrontend = new Map(responseChapters
+    .filter((chapter) => chapter.frontendChapterId && chapter.backendChapterId)
+    .map((chapter) => [chapter.frontendChapterId as string, chapter.backendChapterId as string]))
+  const backendIdByNumber = new Map(responseChapters
+    .filter((chapter) => chapter.chapterNumber && chapter.backendChapterId)
+    .map((chapter) => [Number(chapter.chapterNumber), chapter.backendChapterId as string]))
+  const sourceChapters = work.chapters && work.chapters.length > 0
+    ? work.chapters
+    : [{
+        id: 'chapter-1',
+        chapterNumber: 1,
+        title: work.chapterTitle || '第一章：未命名章节',
+        content: work.chapterText || '',
+        status: 'draft' as const,
+        wordCount: (work.chapterText || '').replace(/\s/g, '').length,
+      }]
+  const chapters = sourceChapters.map((chapter, index) => {
+    const chapterNumber = chapter.chapterNumber || index + 1
+    return {
+      ...chapter,
+      backendChapterId: backendIdByFrontend.get(chapter.id) || backendIdByNumber.get(chapterNumber) || chapter.backendChapterId || (chapterNumber === 1 ? snapshot.chapterId : undefined),
+    }
+  })
+  return {
+    ...work,
+    backendNovelId: snapshot.novelId || work.backendNovelId,
+    chapters,
+    chapterTitle: chapters[0]?.title || work.chapterTitle,
+    chapterText: chapters[0]?.content || work.chapterText,
+    syncState: 'synced',
+    updatedAt: snapshot.updatedAt ? new Date(snapshot.updatedAt).toLocaleString() : '刚刚',
   }
 }
 
@@ -1259,6 +1309,7 @@ function readJson(key: string) {
 
 type CloudSnapshotChapter = {
   frontendChapterId?: string
+  backendChapterId?: string
   chapterNumber?: number
   title?: string
   content?: string
@@ -1314,6 +1365,7 @@ function parseCloudSnapshot(snapshot: CloudWorkSnapshot): SavedWork | null {
         const content = String(chapter.content || '')
         return {
           id: chapter.frontendChapterId || `cloud-chapter-${index + 1}`,
+          backendChapterId: chapter.backendChapterId,
           chapterNumber: Number.isFinite(Number(chapter.chapterNumber)) ? Number(chapter.chapterNumber) : index + 1,
           title: chapter.title || `第 ${index + 1} 章`,
           content,

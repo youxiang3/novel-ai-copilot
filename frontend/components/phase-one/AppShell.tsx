@@ -2,20 +2,17 @@
 
 import {
   Bell,
-  Box,
   ChevronLeft,
   ChevronRight,
   Database,
   Download,
   Home,
   Library,
-  MessageSquare,
   Network,
   Palette,
   PenLine,
   Search,
   Settings,
-  Share2,
   Sparkles,
   UserRound,
 } from 'lucide-react'
@@ -27,17 +24,14 @@ const shellStorageKey = 'yixie-app-shell-collapsed'
 
 const navItems = [
   { key: 'home', label: '首页', icon: Home },
-  { key: 'create', label: '创作台', icon: PenLine },
+  { key: 'create', label: '新建作品', icon: PenLine },
   { key: 'works', label: '作品库', icon: Library },
   { key: 'materials', label: '资料库', icon: Database },
   { key: 'skills', label: '写作工具', icon: Sparkles },
-  { key: 'community', label: '灵感记录', icon: Share2 },
+  { key: 'story-graph', label: '故事线图', icon: Network },
+  { key: 'export', label: '导出发布', icon: Download },
   { key: 'model-settings', label: '模型设置', icon: Settings },
   { key: 'appearance', label: '外观主题', icon: Palette },
-  { key: 'export', label: '导出发布', icon: Download },
-  { key: 'tools', label: '工具箱', icon: Box },
-  { key: 'prompts', label: '提示词库', icon: MessageSquare },
-  { key: 'story-graph', label: '故事线图', icon: Network },
 ]
 
 export function AppShell({

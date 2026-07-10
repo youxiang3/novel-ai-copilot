@@ -3,6 +3,7 @@ package com.novel.service.impl;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.novel.config.UserContext;
+import com.novel.dto.AiCallResult;
 import com.novel.entity.UserModelConfig;
 import com.novel.mapper.UserModelConfigMapper;
 import com.novel.service.AiService;
@@ -50,6 +51,11 @@ public class AIServiceImpl implements AiService {
 
     @Override
     public String call(String prompt) {
+        return callWithUsage(prompt).getContent();
+    }
+
+    @Override
+    public AiCallResult callWithUsage(String prompt) {
         log.info("Calling AI with prompt (sync): {}", prompt.length() > 100 ? prompt.substring(0, 100) + "..." : prompt);
 
         UserModelConfig config = currentModelConfig();
@@ -67,7 +73,7 @@ public class AIServiceImpl implements AiService {
         String result = response.getResult().getOutput().getContent();
         
         log.info("AI response received (sync), length: {}", result.length());
-        return result;
+        return estimatedResult(result, null, prompt);
     }
 
     @Override
@@ -106,7 +112,7 @@ public class AIServiceImpl implements AiService {
                 && !config.getApiKeyEncrypted().isBlank();
     }
 
-    private String callOpenAiCompatible(String prompt, UserModelConfig config) {
+    private AiCallResult callOpenAiCompatible(String prompt, UserModelConfig config) {
         try {
             String apiKey = cryptoService.decrypt(config.getApiKeyEncrypted());
             String body = objectMapper.writeValueAsString(Map.of(
@@ -130,7 +136,7 @@ public class AIServiceImpl implements AiService {
             if (content.isMissingNode() || content.isNull()) {
                 throw new RuntimeException("模型返回格式异常");
             }
-            return content.asText();
+            return resultFromOpenAiCompatible(root, content.asText(), config.getModel(), prompt);
         } catch (Exception e) {
             throw new RuntimeException("模型调用失败: " + e.getMessage(), e);
         }
@@ -195,5 +201,61 @@ public class AIServiceImpl implements AiService {
             log.debug("Ignoring malformed stream chunk: {}", data);
             return "";
         }
+    }
+
+    private AiCallResult resultFromOpenAiCompatible(JsonNode root, String content, String modelName, String prompt) {
+        AiCallResult result = new AiCallResult();
+        result.setContent(content);
+        result.setModelName(firstNonBlank(root.path("model").asText(null), modelName));
+        JsonNode usage = root.path("usage");
+        Integer promptTokens = firstPositiveInt(usage.path("prompt_tokens"), usage.path("input_tokens"));
+        Integer completionTokens = firstPositiveInt(usage.path("completion_tokens"), usage.path("output_tokens"));
+        Integer totalTokens = positiveInt(usage.path("total_tokens"));
+        if (totalTokens == null && promptTokens != null && completionTokens != null) {
+            totalTokens = promptTokens + completionTokens;
+        }
+        result.setPromptTokens(promptTokens);
+        result.setCompletionTokens(completionTokens);
+        result.setTotalTokens(totalTokens == null ? estimateTokenUsage(prompt, content) : totalTokens);
+        result.setUsageSource(totalTokens == null ? "estimated" : "provider");
+        return result;
+    }
+
+    private AiCallResult estimatedResult(String content, String modelName, String prompt) {
+        AiCallResult result = new AiCallResult();
+        result.setContent(content);
+        result.setModelName(modelName);
+        result.setTotalTokens(estimateTokenUsage(prompt, content));
+        result.setUsageSource("estimated");
+        return result;
+    }
+
+    private Integer positiveInt(JsonNode node) {
+        return node == null || !node.canConvertToInt() || node.asInt() < 1 ? null : node.asInt();
+    }
+
+    private Integer firstPositiveInt(JsonNode... nodes) {
+        for (JsonNode node : nodes) {
+            Integer value = positiveInt(node);
+            if (value != null) {
+                return value;
+            }
+        }
+        return null;
+    }
+
+    private int estimateTokenUsage(String prompt, String response) {
+        int promptLength = prompt == null ? 0 : prompt.length();
+        int responseLength = response == null ? 0 : response.length();
+        return Math.max(1, (promptLength + responseLength + 3) / 4);
+    }
+
+    private String firstNonBlank(String... values) {
+        for (String value : values) {
+            if (value != null && !value.isBlank()) {
+                return value.trim();
+            }
+        }
+        return "";
     }
 }

@@ -117,7 +117,34 @@ CREATE INDEX IF NOT EXISTS idx_chapter_novel_id ON chapter(novel_id);
 CREATE INDEX IF NOT EXISTS idx_chapter_novel_number ON chapter(novel_id, chapter_number);
 
 -- ============================================
--- 3.1 work_snapshot_version (作品云端版本历史)
+-- 3.1 chapter_version (章节独立版本历史)
+-- ============================================
+CREATE TABLE IF NOT EXISTS chapter_version (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID NOT NULL,
+    novel_id UUID NOT NULL,
+    chapter_id UUID NOT NULL,
+    version_number INTEGER NOT NULL,
+    title VARCHAR(255),
+    content TEXT,
+    word_count INTEGER DEFAULT 0,
+    source VARCHAR(50) NOT NULL DEFAULT 'manual-snapshot',
+    change_summary TEXT,
+    parent_version_id UUID,
+    ai_generation_log_id UUID,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_chapter_version_user FOREIGN KEY (user_id) REFERENCES "user"(id) ON DELETE CASCADE,
+    CONSTRAINT fk_chapter_version_novel FOREIGN KEY (novel_id) REFERENCES novel(id) ON DELETE CASCADE,
+    CONSTRAINT fk_chapter_version_chapter FOREIGN KEY (chapter_id) REFERENCES chapter(id) ON DELETE CASCADE,
+    CONSTRAINT fk_chapter_version_parent FOREIGN KEY (parent_version_id) REFERENCES chapter_version(id) ON DELETE SET NULL,
+    CONSTRAINT uk_chapter_version_number UNIQUE (chapter_id, version_number)
+);
+
+CREATE INDEX IF NOT EXISTS idx_chapter_version_chapter ON chapter_version(chapter_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_chapter_version_user ON chapter_version(user_id, created_at);
+
+-- ============================================
+-- 3.2 work_snapshot_version (作品云端版本历史)
 -- ============================================
 CREATE TABLE IF NOT EXISTS work_snapshot_version (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -193,6 +220,171 @@ COMMENT ON COLUMN memory_summary.update_time IS '更新时间';
 
 CREATE INDEX IF NOT EXISTS idx_summary_novel_id ON memory_summary(novel_id);
 CREATE INDEX IF NOT EXISTS idx_summary_chapter_id ON memory_summary(chapter_id);
+
+-- ============================================
+-- 5.1 memory_entry (可审核的长篇记忆条目)
+-- ============================================
+CREATE TABLE IF NOT EXISTS memory_entry (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID NOT NULL,
+    novel_id UUID NOT NULL,
+    source_chapter_id UUID,
+    memory_type VARCHAR(50) NOT NULL,
+    title VARCHAR(255) NOT NULL,
+    content TEXT NOT NULL,
+    status VARCHAR(20) NOT NULL DEFAULT 'draft',
+    confidence NUMERIC(4, 3) NOT NULL DEFAULT 1,
+    source_text TEXT,
+    created_by VARCHAR(30) NOT NULL DEFAULT 'user',
+    reviewed_at TIMESTAMP,
+    stale_at TIMESTAMP,
+    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_memory_entry_user FOREIGN KEY (user_id) REFERENCES "user"(id) ON DELETE CASCADE,
+    CONSTRAINT fk_memory_entry_novel FOREIGN KEY (novel_id) REFERENCES novel(id) ON DELETE CASCADE,
+    CONSTRAINT fk_memory_entry_chapter FOREIGN KEY (source_chapter_id) REFERENCES chapter(id) ON DELETE SET NULL,
+    CONSTRAINT ck_memory_entry_status CHECK (status IN ('draft', 'confirmed', 'rejected', 'stale')),
+    CONSTRAINT ck_memory_entry_type CHECK (memory_type IN ('event', 'character-state', 'world-fact', 'open-foreshadow', 'chapter-summary', 'rule')),
+    CONSTRAINT ck_memory_entry_confidence CHECK (confidence >= 0 AND confidence <= 1)
+);
+
+CREATE INDEX IF NOT EXISTS idx_memory_entry_novel_status ON memory_entry(novel_id, status, update_time DESC);
+CREATE INDEX IF NOT EXISTS idx_memory_entry_source_chapter ON memory_entry(source_chapter_id);
+CREATE INDEX IF NOT EXISTS idx_memory_entry_user ON memory_entry(user_id, update_time DESC);
+
+-- ============================================
+-- 5.2 diagnostic_run / diagnostic_issue (证据化诊断)
+-- ============================================
+CREATE TABLE IF NOT EXISTS diagnostic_run (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID NOT NULL,
+    novel_id UUID NOT NULL,
+    chapter_id UUID NOT NULL,
+    run_type VARCHAR(50) NOT NULL,
+    mode VARCHAR(30) NOT NULL,
+    status VARCHAR(20) NOT NULL DEFAULT 'completed',
+    title VARCHAR(255) NOT NULL,
+    summary TEXT,
+    overall_score INTEGER,
+    issue_count INTEGER NOT NULL DEFAULT 0,
+    high_count INTEGER NOT NULL DEFAULT 0,
+    medium_count INTEGER NOT NULL DEFAULT 0,
+    low_count INTEGER NOT NULL DEFAULT 0,
+    input_snapshot TEXT,
+    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_diagnostic_run_user FOREIGN KEY (user_id) REFERENCES "user"(id) ON DELETE CASCADE,
+    CONSTRAINT fk_diagnostic_run_novel FOREIGN KEY (novel_id) REFERENCES novel(id) ON DELETE CASCADE,
+    CONSTRAINT fk_diagnostic_run_chapter FOREIGN KEY (chapter_id) REFERENCES chapter(id) ON DELETE CASCADE,
+    CONSTRAINT ck_diagnostic_run_type CHECK (run_type IN ('consistency', 'readthrough', 'human-taste', 'viral-potential', 'web-ai', 'model-api')),
+    CONSTRAINT ck_diagnostic_run_mode CHECK (mode IN ('local-rules', 'web-ai', 'model-api')),
+    CONSTRAINT ck_diagnostic_run_score CHECK (overall_score IS NULL OR (overall_score >= 0 AND overall_score <= 100))
+);
+
+CREATE TABLE IF NOT EXISTS diagnostic_issue (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    run_id UUID NOT NULL,
+    user_id UUID NOT NULL,
+    novel_id UUID NOT NULL,
+    chapter_id UUID NOT NULL,
+    issue_type VARCHAR(80) NOT NULL,
+    severity VARCHAR(20) NOT NULL,
+    issue_status VARCHAR(20) NOT NULL DEFAULT 'open',
+    position_text VARCHAR(500),
+    title VARCHAR(255),
+    description TEXT NOT NULL,
+    evidence TEXT,
+    reason TEXT,
+    suggestion TEXT NOT NULL,
+    dimension VARCHAR(255),
+    priority INTEGER,
+    confidence NUMERIC(4, 3) DEFAULT 1,
+    source VARCHAR(100),
+    resolved_at TIMESTAMP,
+    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_diagnostic_issue_run FOREIGN KEY (run_id) REFERENCES diagnostic_run(id) ON DELETE CASCADE,
+    CONSTRAINT fk_diagnostic_issue_user FOREIGN KEY (user_id) REFERENCES "user"(id) ON DELETE CASCADE,
+    CONSTRAINT fk_diagnostic_issue_novel FOREIGN KEY (novel_id) REFERENCES novel(id) ON DELETE CASCADE,
+    CONSTRAINT fk_diagnostic_issue_chapter FOREIGN KEY (chapter_id) REFERENCES chapter(id) ON DELETE CASCADE,
+    CONSTRAINT ck_diagnostic_issue_severity CHECK (severity IN ('high', 'medium', 'low')),
+    CONSTRAINT ck_diagnostic_issue_status CHECK (issue_status IN ('open', 'ignored', 'resolved')),
+    CONSTRAINT ck_diagnostic_issue_confidence CHECK (confidence IS NULL OR (confidence >= 0 AND confidence <= 1))
+);
+
+CREATE INDEX IF NOT EXISTS idx_diagnostic_run_chapter ON diagnostic_run(chapter_id, create_time DESC);
+CREATE INDEX IF NOT EXISTS idx_diagnostic_run_novel ON diagnostic_run(novel_id, create_time DESC);
+CREATE INDEX IF NOT EXISTS idx_diagnostic_issue_run ON diagnostic_issue(run_id, priority, create_time);
+CREATE INDEX IF NOT EXISTS idx_diagnostic_issue_open ON diagnostic_issue(novel_id, issue_status, severity);
+
+-- ============================================
+-- 5.3 chapter_task (章节任务卡版本)
+-- ============================================
+CREATE TABLE IF NOT EXISTS chapter_task (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID NOT NULL,
+    novel_id UUID NOT NULL,
+    chapter_id UUID NOT NULL,
+    version_number INTEGER NOT NULL,
+    parent_task_id UUID,
+    task_status VARCHAR(20) NOT NULL DEFAULT 'draft',
+    title_candidates_json TEXT NOT NULL DEFAULT '[]',
+    core_goal TEXT NOT NULL,
+    emotion_goal TEXT,
+    target_words INTEGER NOT NULL DEFAULT 2500,
+    storyline TEXT,
+    volume_node VARCHAR(1000),
+    must_do_json TEXT NOT NULL DEFAULT '[]',
+    forbidden_json TEXT NOT NULL DEFAULT '[]',
+    rhythm_steps_json TEXT NOT NULL DEFAULT '[]',
+    source VARCHAR(30) NOT NULL DEFAULT 'user',
+    source_basis_json TEXT NOT NULL DEFAULT '[]',
+    is_current BOOLEAN NOT NULL DEFAULT TRUE,
+    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_chapter_task_user FOREIGN KEY (user_id) REFERENCES "user"(id) ON DELETE CASCADE,
+    CONSTRAINT fk_chapter_task_novel FOREIGN KEY (novel_id) REFERENCES novel(id) ON DELETE CASCADE,
+    CONSTRAINT fk_chapter_task_chapter FOREIGN KEY (chapter_id) REFERENCES chapter(id) ON DELETE CASCADE,
+    CONSTRAINT fk_chapter_task_parent FOREIGN KEY (parent_task_id) REFERENCES chapter_task(id) ON DELETE SET NULL,
+    CONSTRAINT uk_chapter_task_version UNIQUE (chapter_id, version_number),
+    CONSTRAINT ck_chapter_task_status CHECK (task_status IN ('draft', 'active', 'completed')),
+    CONSTRAINT ck_chapter_task_source CHECK (source IN ('user', 'local', 'model-api')),
+    CONSTRAINT ck_chapter_task_target_words CHECK (target_words >= 0)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uk_chapter_task_current ON chapter_task(chapter_id) WHERE is_current = TRUE;
+CREATE INDEX IF NOT EXISTS idx_chapter_task_novel ON chapter_task(novel_id, is_current, update_time DESC);
+CREATE INDEX IF NOT EXISTS idx_chapter_task_chapter ON chapter_task(chapter_id, version_number DESC);
+
+-- ============================================
+-- 5.4 chapter_workflow_state (章节创作阶段历史)
+-- ============================================
+CREATE TABLE IF NOT EXISTS chapter_workflow_state (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID NOT NULL,
+    novel_id UUID NOT NULL,
+    chapter_id UUID NOT NULL,
+    version_number INTEGER NOT NULL,
+    parent_state_id UUID,
+    previous_stage VARCHAR(30),
+    stage VARCHAR(30) NOT NULL,
+    transition_source VARCHAR(30) NOT NULL,
+    reason TEXT,
+    reference_type VARCHAR(50) NOT NULL DEFAULT 'none',
+    reference_id UUID,
+    is_current BOOLEAN NOT NULL DEFAULT TRUE,
+    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_chapter_workflow_user FOREIGN KEY (user_id) REFERENCES "user"(id) ON DELETE CASCADE,
+    CONSTRAINT fk_chapter_workflow_novel FOREIGN KEY (novel_id) REFERENCES novel(id) ON DELETE CASCADE,
+    CONSTRAINT fk_chapter_workflow_chapter FOREIGN KEY (chapter_id) REFERENCES chapter(id) ON DELETE CASCADE,
+    CONSTRAINT fk_chapter_workflow_parent FOREIGN KEY (parent_state_id) REFERENCES chapter_workflow_state(id) ON DELETE SET NULL,
+    CONSTRAINT uk_chapter_workflow_version UNIQUE (chapter_id, version_number),
+    CONSTRAINT ck_chapter_workflow_stage CHECK (stage IN ('planning', 'writing', 'diagnosing', 'revising', 'confirming', 'memory', 'publish-ready', 'completed')),
+    CONSTRAINT ck_chapter_workflow_source CHECK (transition_source IN ('user', 'task', 'diagnostic', 'rewrite', 'version', 'memory', 'publish', 'system'))
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uk_chapter_workflow_current ON chapter_workflow_state(chapter_id) WHERE is_current = TRUE;
+CREATE INDEX IF NOT EXISTS idx_chapter_workflow_history ON chapter_workflow_state(chapter_id, version_number DESC);
 
 -- ============================================
 -- 6. story_state (全局动态状态)

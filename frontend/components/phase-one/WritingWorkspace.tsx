@@ -37,10 +37,10 @@ import {
   Wand2,
   X,
 } from 'lucide-react'
-import type { CheckIssue, CheckIssueType, IssueSeverity, LoreEntry, LoreType, MemoryEntry, MemoryType, OperationStatus, SavedWork, WorkChapter, WorkVersionRecord } from './types'
+import type { ChapterTask, CheckIssue, CheckIssueType, IssueSeverity, LoreEntry, LoreType, MemoryEntry, MemoryType, OperationStatus, SavedWork, WorkChapter, WorkVersionRecord } from './types'
 import { cn } from '@/lib/utils'
 
-type WorkspaceView = 'overview' | 'editor' | 'lore' | 'memory' | 'checks' | 'ip'
+type WorkspaceView = 'overview' | 'editor' | 'task' | 'lore' | 'memory' | 'checks' | 'ip'
 type IpFactoryMode = 'screenplay' | 'game'
 const backendApiBase = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8080'
 type PromptRunStatus = 'copied' | 'parsed'
@@ -51,10 +51,15 @@ type BackendResult<T> = { code: number; message: string; data: T }
 type RewriteVersionOption = { id: string; title: string; tone: string; summary: string; text: string; source?: 'local' | 'backend' }
 type RewriteDiffSegment = { type: 'equal' | 'added' | 'removed'; text: string }
 type RewriteDiffPreview = { segments: RewriteDiffSegment[]; truncated: boolean }
-type AssistantSearchKind = 'chapter' | 'lore' | 'memory' | 'issue' | 'artifact'
-type AssistantSearchResult = { id: string; kind: AssistantSearchKind; title: string; excerpt: string; actionText?: string; targetView: WorkspaceView }
+type VersionChapterDiffStatus = 'added' | 'removed' | 'changed' | 'unchanged'
+type VersionChapterDiff = { key: string; status: VersionChapterDiffStatus; title: string; oldContent: string; newContent: string; oldWords: number; newWords: number }
+type WorkVersionComparison = { wordDelta: number; chapterDelta: number; addedCount: number; removedCount: number; changedCount: number; unchangedCount: number; chapterDiffs: VersionChapterDiff[] }
+type AssistantSearchKind = 'chapter' | 'lore' | 'memory' | 'issue' | 'artifact' | 'work' | 'work-chapter'
+type AssistantSearchResult = { id: string; kind: AssistantSearchKind; title: string; excerpt: string; actionText?: string; targetView: WorkspaceView; workId?: string; chapterId?: string }
 type BackendRewriteResult = {
   mode?: string
+  errorCode?: string
+  errorType?: string
   replacementText?: string
   conservativeText?: string
   expandedText?: string
@@ -73,6 +78,30 @@ type BackendRewriteLog = {
   tokenUsage?: number
   createTime?: string
 }
+type BackendRewriteLogListResponse = {
+  logs?: BackendRewriteLog[]
+  total?: number
+  offset?: number
+  limit?: number
+  totalTokenUsage?: number
+  latestCreateTime?: string
+}
+type BackendRewriteLogScope = 'all' | 'current'
+type BackendChapterVersion = {
+  id: string
+  chapterId: string
+  versionNumber: number
+  title?: string
+  content?: string
+  wordCount?: number
+  source?: 'manual-save' | 'manual-snapshot' | 'ai-adopt' | 'restore-backup' | 'restore'
+  changeSummary?: string
+  parentVersionId?: string
+  aiGenerationLogId?: string
+  createdAt?: string
+}
+type BackendRewriteCostStats = { visibleTokens: number; averageTokens: number; maxTokens: number; chartLogs: BackendRewriteLog[]; visibleCost: number; totalCost: number; unitPrice: number }
+type BackendRewriteRiskStats = { total: number; failedCount: number; rawResponseCount: number; emptyResponseCount: number; noteCounts: Array<{ label: string; count: number }>; errorCodeCounts: Array<{ label: string; count: number }> }
 type BackendLore = {
   id: string
   novelId: string
@@ -81,6 +110,98 @@ type BackendLore = {
   content: string
   createTime?: string
   updateTime?: string
+}
+type BackendMemoryEntry = {
+  id: string
+  novelId: string
+  sourceChapterId?: string
+  memoryType: MemoryType
+  title: string
+  content: string
+  status: NonNullable<MemoryEntry['status']>
+  confidence?: number
+  sourceText?: string
+  createdBy?: 'user' | 'local' | 'web-ai' | 'model-api'
+  reviewedAt?: string
+  staleAt?: string
+  createTime?: string
+  updateTime?: string
+}
+type DiagnosticRunType = 'consistency' | 'readthrough' | 'human-taste' | 'viral-potential' | 'web-ai' | 'model-api'
+type BackendDiagnosticRun = {
+  id: string
+  novelId: string
+  chapterId: string
+  runType: DiagnosticRunType
+  mode: 'local-rules' | 'web-ai' | 'model-api'
+  status: 'completed' | 'failed'
+  title: string
+  summary?: string
+  overallScore?: number
+  issueCount: number
+  highCount: number
+  mediumCount: number
+  lowCount: number
+  createTime?: string
+  updateTime?: string
+}
+type BackendDiagnosticIssue = {
+  id: string
+  runId: string
+  issueType: CheckIssueType
+  severity: IssueSeverity
+  issueStatus: CheckIssue['status']
+  positionText?: string
+  title?: string
+  description: string
+  evidence?: string
+  reason?: string
+  suggestion: string
+  dimension?: string
+  priority?: number
+  confidence?: number
+  source?: string
+  createTime?: string
+  updateTime?: string
+}
+type BackendDiagnosticRunResponse = { run: BackendDiagnosticRun; issues: BackendDiagnosticIssue[] }
+type BackendChapterTask = {
+  id: string
+  novelId: string
+  chapterId: string
+  versionNumber: number
+  parentTaskId?: string
+  status: ChapterTask['status']
+  titleCandidates: string[]
+  coreGoal: string
+  emotionGoal: string
+  targetWords: number
+  storyline: string
+  volumeNode: string
+  mustDo: string[]
+  forbidden: string[]
+  rhythmSteps: string[]
+  source: ChapterTask['source']
+  sourceBasis: string[]
+  current: boolean
+  createTime?: string
+  updateTime?: string
+}
+type WorkflowStage = 'planning' | 'writing' | 'diagnosing' | 'revising' | 'confirming' | 'memory' | 'publish-ready' | 'completed'
+type BackendChapterWorkflowState = {
+  id: string
+  novelId: string
+  chapterId: string
+  versionNumber: number
+  parentStateId?: string
+  previousStage?: WorkflowStage
+  stage: WorkflowStage
+  transitionSource: 'user' | 'task' | 'diagnostic' | 'rewrite' | 'version' | 'memory' | 'publish' | 'system'
+  reason?: string
+  referenceType?: 'none' | 'chapter-task' | 'diagnostic-run' | 'chapter-version' | 'memory-entry'
+  referenceId?: string
+  current: boolean
+  createTime?: string
 }
 
 interface PromptRunRecord {
@@ -194,6 +315,17 @@ const memoryCreatedByText: Record<NonNullable<MemoryEntry['createdBy']>, string>
   'web-ai': '网页 AI',
 }
 
+const workflowStageOrder: WorkflowStage[] = ['planning', 'writing', 'diagnosing', 'revising', 'confirming', 'memory', 'publish-ready', 'completed']
+const workflowStageText: Record<WorkflowStage, string> = {
+  planning: '任务规划', writing: '正文写作', diagnosing: '章节诊断', revising: '章节改稿',
+  confirming: '正文确认', memory: '记忆确认', 'publish-ready': '发布准备', completed: '本章完成',
+}
+const workflowStageTransitions: Record<WorkflowStage, WorkflowStage[]> = {
+  planning: ['writing'], writing: ['diagnosing', 'revising'], diagnosing: ['revising', 'confirming'],
+  revising: ['diagnosing', 'confirming'], confirming: ['revising', 'memory'], memory: ['publish-ready', 'planning'],
+  'publish-ready': ['writing', 'completed'], completed: ['writing'],
+}
+
 export function WritingWorkspace({
   work: rawWork,
   status,
@@ -208,6 +340,8 @@ export function WritingWorkspace({
   onCreateVersion,
   onRestoreVersion,
   onManualSync,
+  works = [],
+  onOpenWork,
 }: {
   work: SavedWork
   status: OperationStatus
@@ -216,12 +350,14 @@ export function WritingWorkspace({
   onBackHome: () => void
   onOpenStoryGraph?: () => void
   onWorkChange: (work: SavedWork) => void
-  onSave: () => void
+  onSave: (chapter?: WorkChapter) => void
   backendToken?: string
   versionRecords?: WorkVersionRecord[]
   onCreateVersion?: () => void
   onRestoreVersion?: (record: WorkVersionRecord) => void
   onManualSync?: () => void
+  works?: SavedWork[]
+  onOpenWork?: (work: SavedWork) => void
 }) {
   const work = normalizeWorkspaceWork(rawWork)
   const [view, setView] = useState<WorkspaceView>(initialView)
@@ -229,6 +365,14 @@ export function WritingWorkspace({
   const [loreEntries, setLoreEntries] = useState<LoreEntry[]>(() => seedLore(work))
   const [memoryEntries, setMemoryEntries] = useState<MemoryEntry[]>(() => seedMemory(work))
   const [checkIssues, setCheckIssues] = useState<CheckIssue[]>([])
+  const [diagnosticRuns, setDiagnosticRuns] = useState<BackendDiagnosticRun[]>([])
+  const [diagnosticSyncMessage, setDiagnosticSyncMessage] = useState('')
+  const [diagnosticLoading, setDiagnosticLoading] = useState(false)
+  const [chapterTaskVersions, setChapterTaskVersions] = useState<BackendChapterTask[]>([])
+  const [chapterTaskSyncMessage, setChapterTaskSyncMessage] = useState('')
+  const [workflowState, setWorkflowState] = useState<BackendChapterWorkflowState | null>(null)
+  const [workflowHistory, setWorkflowHistory] = useState<BackendChapterWorkflowState[]>([])
+  const [workflowMessage, setWorkflowMessage] = useState('')
   const [selectedLoreId, setSelectedLoreId] = useState('')
   const [loreSearch, setLoreSearch] = useState('')
   const [loreFilter, setLoreFilter] = useState<LoreType | 'all'>('all')
@@ -245,6 +389,7 @@ export function WritingWorkspace({
   const [ipOutput, setIpOutput] = useState('')
   const [ipGenerating, setIpGenerating] = useState(false)
   const [loreSyncMessage, setLoreSyncMessage] = useState('')
+  const [memorySyncMessage, setMemorySyncMessage] = useState('')
   const [viralDiagnosis, setViralDiagnosis] = useState<ViralDiagnosisSummary | null>(null)
   const [viralPromptText, setViralPromptText] = useState('')
   const [rewriteInstruction, setRewriteInstruction] = useState('')
@@ -252,9 +397,16 @@ export function WritingWorkspace({
   const [selectedRewriteRange, setSelectedRewriteRange] = useState<TextRange | null>(null)
   const [rewriteApplyText, setRewriteApplyText] = useState('')
   const [backendRewriteLoading, setBackendRewriteLoading] = useState(false)
+  const [backendRewriteStreamText, setBackendRewriteStreamText] = useState('')
   const [backendRewriteOptions, setBackendRewriteOptions] = useState<RewriteVersionOption[]>([])
   const [backendRewriteLogs, setBackendRewriteLogs] = useState<BackendRewriteLog[]>([])
   const [backendRewriteLogsLoading, setBackendRewriteLogsLoading] = useState(false)
+  const [backendRewriteLogScope, setBackendRewriteLogScope] = useState<BackendRewriteLogScope>('all')
+  const [backendRewriteLogTotal, setBackendRewriteLogTotal] = useState(0)
+  const [backendRewriteLogTotalTokens, setBackendRewriteLogTotalTokens] = useState(0)
+  const [backendRewriteLogLatestTime, setBackendRewriteLogLatestTime] = useState('')
+  const [backendChapterVersions, setBackendChapterVersions] = useState<BackendChapterVersion[]>([])
+  const [backendChapterVersionsLoading, setBackendChapterVersionsLoading] = useState(false)
   const [assistantSearchQuery, setAssistantSearchQuery] = useState('')
   const backendRewriteAbortRef = useRef<AbortController | null>(null)
   const storageKey = `yixie-phase3-workspace-${work.id}`
@@ -262,8 +414,14 @@ export function WritingWorkspace({
   const artifactStorageKey = `yixie-artifact-runs-v1-${work.id}`
   const chapters = normalizeWorkspaceChapters(work)
   const currentChapter = chapters.find((chapter) => chapter.id === selectedChapterId) ?? chapters[0]
+  const chapterTasks = normalizeChapterTasks(work.chapterTasks)
+  const currentTask = chapterTasks.find((task) => task.chapterId === currentChapter.id)
   const wordCount = currentChapter.content.replace(/\s/g, '').length
   const canSyncLore = Boolean(backendToken && work.backendNovelId && work.status === 'official')
+  const canSyncMemory = canSyncLore
+  const canSyncDiagnostics = Boolean(canSyncLore && currentChapter.backendChapterId)
+  const canSyncChapterTask = canSyncDiagnostics
+  const canSyncWorkflow = canSyncDiagnostics
 
   useEffect(() => {
     setView(initialView)
@@ -295,7 +453,23 @@ export function WritingWorkspace({
 
   useEffect(() => {
     void refreshBackendRewriteLogs(false)
-  }, [backendToken, work.backendNovelId])
+  }, [backendToken, work.backendNovelId, backendRewriteLogScope, currentChapter.backendChapterId])
+
+  useEffect(() => {
+    void refreshBackendChapterVersions(false)
+  }, [backendToken, currentChapter.backendChapterId])
+
+  useEffect(() => {
+    void refreshDiagnosticRuns(false, true)
+  }, [backendToken, work.backendNovelId, currentChapter.backendChapterId])
+
+  useEffect(() => {
+    void refreshCurrentChapterTask(false)
+  }, [backendToken, work.backendNovelId, currentChapter.backendChapterId])
+
+  useEffect(() => {
+    void refreshWorkflowState(false)
+  }, [backendToken, work.backendNovelId, currentChapter.backendChapterId])
 
   useEffect(() => {
     try {
@@ -356,6 +530,36 @@ export function WritingWorkspace({
     }
   }, [backendToken, canSyncLore, work.backendNovelId, work.status])
 
+  useEffect(() => {
+    if (!canSyncMemory || !work.backendNovelId) {
+      setMemorySyncMessage(work.status === 'official' && backendToken ? '长篇记忆将在作品完成云端同步后接入后端。' : '长篇记忆当前保存在本地。')
+      return
+    }
+    let cancelled = false
+    async function loadBackendMemories() {
+      try {
+        const response = await fetch(`${backendApiBase}/api/memories?novelId=${encodeURIComponent(work.backendNovelId || '')}`, {
+          headers: { Authorization: `Bearer ${backendToken}` },
+        })
+        if (!response.ok) throw new Error(`HTTP ${response.status}`)
+        const result = await response.json() as BackendResult<BackendMemoryEntry[]>
+        if (cancelled || result.code !== 200 || !Array.isArray(result.data)) return
+        if (result.data.length > 0) {
+          setMemoryEntries(result.data.map((entry) => memoryFromBackend(entry, chapters)))
+          setMemorySyncMessage(`已从后端读取 ${result.data.length} 条长篇记忆。`)
+        } else {
+          setMemorySyncMessage('后端暂无长篇记忆；点击同步可上传当前本地条目。')
+        }
+      } catch {
+        if (!cancelled) setMemorySyncMessage('后端记忆暂不可用，继续使用本地条目。')
+      }
+    }
+    void loadBackendMemories()
+    return () => {
+      cancelled = true
+    }
+  }, [backendToken, canSyncMemory, work.backendNovelId, work.status])
+
   const selectedLore = loreEntries.find((entry) => entry.id === selectedLoreId) ?? loreEntries[0]
   const filteredLore = loreEntries.filter((entry) => {
     const hitType = loreFilter === 'all' || entry.type === loreFilter
@@ -370,8 +574,9 @@ export function WritingWorkspace({
     }))
   }, [memoryEntries])
   const openIssues = checkIssues.filter((issue) => issue.status === 'open')
-  const webAiPrompt = useMemo(() => buildWorkspacePrompt(webAiTarget, work, currentChapter, loreEntries, memoryEntries, rewriteInstruction, selectedRewriteText), [currentChapter, loreEntries, memoryEntries, rewriteInstruction, selectedRewriteText, webAiTarget, work])
-  const assistantSearchResults = useMemo(() => buildAssistantSearchResults(assistantSearchQuery, chapters, loreEntries, memoryEntries, checkIssues, artifactRecords), [artifactRecords, assistantSearchQuery, chapters, checkIssues, loreEntries, memoryEntries])
+  const webAiPrompt = useMemo(() => buildWorkspacePrompt(webAiTarget, work, currentChapter, loreEntries, memoryEntries, rewriteInstruction, selectedRewriteText, currentTask), [currentChapter, currentTask, loreEntries, memoryEntries, rewriteInstruction, selectedRewriteText, webAiTarget, work])
+  const searchableWorks = useMemo(() => works.map((item) => normalizeWorkspaceWork(item)), [works])
+  const assistantSearchResults = useMemo(() => buildAssistantSearchResults(assistantSearchQuery, work, chapters, loreEntries, memoryEntries, checkIssues, artifactRecords, searchableWorks), [artifactRecords, assistantSearchQuery, chapters, checkIssues, loreEntries, memoryEntries, searchableWorks, work])
 
   function flash(nextStatus: OperationStatus, nextMessage: string) {
     setWorkspaceStatus(nextStatus)
@@ -487,7 +692,7 @@ export function WritingWorkspace({
       type,
       title: memoryTypeLabels[type],
       content: type === 'rule' ? '禁止违背已确认的人物动机、世界观规则和章节目标。' : '双击或直接编辑这条记忆内容。',
-      sourceChapterId: 'chapter-1',
+      sourceChapterId: currentChapter.id,
       updatedAt: '刚刚',
       status: 'draft',
       confidence: 1,
@@ -503,12 +708,38 @@ export function WritingWorkspace({
     setMemoryEntries((current) => current.map((entry) => entry.id === id ? { ...entry, content, updatedAt: '刚刚' } : entry))
   }
 
-  function updateMemoryStatus(id: string, status: NonNullable<MemoryEntry['status']>) {
-    setMemoryEntries((current) => current.map((entry) => entry.id === id ? { ...entry, status, updatedAt: '刚刚' } : entry))
+  async function updateMemoryStatus(id: string, status: NonNullable<MemoryEntry['status']>) {
+    const entry = memoryEntries.find((item) => item.id === id)
+    if (!entry) return
+    const next = { ...entry, status, updatedAt: '刚刚' }
+    setMemoryEntries((current) => current.map((item) => item.id === id ? next : item))
+    if (canSyncMemory && work.backendNovelId) {
+      try {
+        const saved = await saveMemoryToBackend(next, work.backendNovelId, backendToken, chapters)
+        setMemoryEntries((current) => current.map((item) => item.id === id ? saved : item))
+        setMemorySyncMessage('记忆状态已同步到后端。')
+        if (status === 'confirmed') void transitionWorkflowStage('memory', 'memory', '确认章节记忆，进入记忆整理阶段', 'memory-entry', saved.id)
+      } catch {
+        setMemorySyncMessage('记忆状态后端同步失败，已保留本地修改。')
+      }
+    }
     flash('success', status === 'confirmed' ? '记忆条目已确认。' : status === 'rejected' ? '记忆条目已拒绝。' : '记忆条目已标记为可能过期。')
   }
 
-  function deleteMemory(id: string) {
+  async function deleteMemory(id: string) {
+    if (canSyncMemory && isUuid(id)) {
+      try {
+        const response = await fetch(`${backendApiBase}/api/memories/${encodeURIComponent(id)}`, {
+          method: 'DELETE',
+          headers: { Authorization: `Bearer ${backendToken}` },
+        })
+        const result = await response.json() as BackendResult<void>
+        if (!response.ok || result.code !== 200) throw new Error(result.message || '删除失败')
+        setMemorySyncMessage('记忆删除已同步到后端。')
+      } catch {
+        setMemorySyncMessage('后端删除失败，已先从本地移除。')
+      }
+    }
     setMemoryEntries((current) => current.filter((entry) => entry.id !== id))
     flash('success', '记忆条目已删除。')
   }
@@ -519,6 +750,7 @@ export function WritingWorkspace({
     window.setTimeout(() => {
       const issues = localCheck(work, loreEntries, memoryEntries)
       setCheckIssues(issues)
+      void persistDiagnosticRun('consistency', `${currentChapter.title} 一致性检查`, issues)
       recordArtifact('check', `${currentChapter.title} 本地检查`, issues.map((issue) => `${severityLabels[issue.severity]}｜${issueTypeLabels[issue.issueType]}\n${issue.description}\n建议：${issue.suggestion}`).join('\n\n'), 'local')
       setView('checks')
       flash('success', '检查完成，结果已生成。')
@@ -531,6 +763,7 @@ export function WritingWorkspace({
     window.setTimeout(() => {
       const issues = localReadthroughDiagnosis(work, currentChapter, loreEntries, memoryEntries)
       setCheckIssues(issues)
+      void persistDiagnosticRun('readthrough', `${currentChapter.title} 追读诊断`, issues)
       recordArtifact('check', `${currentChapter.title} 追读诊断`, issues.map((issue) => `${severityLabels[issue.severity]}｜${issueTypeLabels[issue.issueType]}\n${issue.position}\n${issue.description}\n建议：${issue.suggestion}`).join('\n\n'), 'local')
       setView('checks')
       flash('success', '追读诊断已生成，结果仅作为本地修稿参考。')
@@ -543,6 +776,7 @@ export function WritingWorkspace({
     window.setTimeout(() => {
       const issues = localHumanTasteRevision(work, currentChapter)
       setCheckIssues(issues)
+      void persistDiagnosticRun('human-taste', `${currentChapter.title} 人味修订`, issues)
       recordArtifact('check', `${currentChapter.title} 人味修订`, issues.map((issue) => `${severityLabels[issue.severity]}｜${issueTypeLabels[issue.issueType]}\n${issue.position}\n${issue.description}\n建议：${issue.suggestion}`).join('\n\n'), 'local')
       setView('checks')
       flash('success', '人味修订建议已生成，需要你确认后再改正文。')
@@ -557,6 +791,10 @@ export function WritingWorkspace({
       setCheckIssues(result.issues)
       setViralDiagnosis(result.summary)
       setViralPromptText(result.promptText)
+      void persistDiagnosticRun('viral-potential', `${currentChapter.title} 爆款潜力诊断`, result.issues, {
+        summary: result.summary.overallSummary,
+        overallScore: result.summary.overallScore,
+      })
       recordArtifact('viral', `${currentChapter.title} 爆款潜力诊断`, formatViralDiagnosisArtifact(result), 'local', {
         diagnosisVersion: result.summary.diagnosisVersion,
         diagnosisMode: result.summary.diagnosisMode,
@@ -620,8 +858,9 @@ export function WritingWorkspace({
     backendRewriteAbortRef.current = controller
     const timeoutId = window.setTimeout(() => controller.abort(), 120000)
     setBackendRewriteLoading(true)
+    setBackendRewriteStreamText('')
     try {
-      const response = await fetch(`${backendApiBase}/api/chapters/rewrite`, {
+      const response = await fetch(`${backendApiBase}/api/chapters/rewrite/stream`, {
         method: 'POST',
         signal: controller.signal,
         headers: {
@@ -630,6 +869,7 @@ export function WritingWorkspace({
         },
         body: JSON.stringify({
           novelId: work.backendNovelId,
+          chapterId: currentChapter.backendChapterId,
           workTitle: work.title,
           genre: work.type || work.materials?.genre,
           sellingPoint: work.sellingPoint || work.materials?.sellingPoint,
@@ -645,9 +885,21 @@ export function WritingWorkspace({
         }),
       })
       if (!response.ok) throw new Error(`HTTP ${response.status}`)
-      const result = await response.json() as BackendResult<BackendRewriteResult>
-      if (result.code !== 200) throw new Error(result.message || 'API 改稿失败')
-      const data = result.data
+      if (!response.body) throw new Error('浏览器没有返回可读取的流式响应')
+      const reader = response.body.getReader()
+      const decoder = new TextDecoder()
+      let rawStreamText = ''
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        const chunk = decoder.decode(value, { stream: true })
+        rawStreamText += chunk
+        setBackendRewriteStreamText(normalizeBackendRewriteStreamText(rawStreamText))
+      }
+      rawStreamText += decoder.decode()
+      const streamText = normalizeBackendRewriteStreamText(rawStreamText)
+      setBackendRewriteStreamText(streamText)
+      const data = parseBackendRewriteLogResult(streamText)
       const replacementText = data.replacementText?.trim() || data.conservativeText?.trim() || data.polishedText?.trim() || ''
       if (!replacementText) throw new Error('模型没有返回可采用文本')
       setBackendRewriteOptions(buildBackendRewriteVersionOptions(data))
@@ -661,7 +913,7 @@ export function WritingWorkspace({
         createdAt: new Date().toLocaleString(),
       })
       void refreshBackendRewriteLogs(false)
-      flash('success', 'API 改稿已生成，并填入“采用文本”。请检查 diff 后再替换。')
+      flash('success', 'API 改稿流式生成完成，并填入“采用文本”。请检查 diff 后再替换。')
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') {
         flash('error', 'API 改稿已取消或超时；正文未被修改，可稍后重试。')
@@ -679,23 +931,257 @@ export function WritingWorkspace({
     backendRewriteAbortRef.current?.abort()
   }
 
-  async function refreshBackendRewriteLogs(showMessage = true) {
+  async function refreshBackendChapterVersions(showMessage = true) {
+    if (!backendToken || !currentChapter.backendChapterId) {
+      setBackendChapterVersions([])
+      return
+    }
+    setBackendChapterVersionsLoading(true)
+    try {
+      const response = await fetch(`${backendApiBase}/api/chapter/${encodeURIComponent(currentChapter.backendChapterId)}/versions`, {
+        headers: { Authorization: `Bearer ${backendToken}` },
+      })
+      if (!response.ok) throw new Error(`HTTP ${response.status}`)
+      const result = await response.json() as BackendResult<BackendChapterVersion[]>
+      if (result.code !== 200 || !Array.isArray(result.data)) throw new Error(result.message || '读取章节版本失败')
+      setBackendChapterVersions(result.data)
+      if (showMessage) flash('success', '当前章节版本已刷新。')
+    } catch (error) {
+      if (showMessage) flash('error', `读取章节版本失败：${error instanceof Error ? error.message : '未知错误'}`)
+    } finally {
+      setBackendChapterVersionsLoading(false)
+    }
+  }
+
+  async function refreshDiagnosticRuns(showMessage = true, loadLatest = false) {
+    if (!canSyncDiagnostics || !work.backendNovelId || !currentChapter.backendChapterId) {
+      setDiagnosticRuns([])
+      setDiagnosticSyncMessage('当前诊断保存在本地；登录并同步正式作品后可保存诊断历史。')
+      return
+    }
+    setDiagnosticLoading(true)
+    try {
+      const params = new URLSearchParams({
+        novelId: work.backendNovelId,
+        chapterId: currentChapter.backendChapterId,
+        limit: '12',
+      })
+      const response = await fetch(`${backendApiBase}/api/diagnostics?${params.toString()}`, {
+        headers: { Authorization: `Bearer ${backendToken}` },
+      })
+      const result = await response.json() as BackendResult<BackendDiagnosticRun[]>
+      if (!response.ok || result.code !== 200 || !Array.isArray(result.data)) throw new Error(result.message || '读取诊断历史失败')
+      setDiagnosticRuns(result.data)
+      setDiagnosticSyncMessage(result.data.length > 0 ? `已读取 ${result.data.length} 次当前章节诊断。` : '当前章节暂无后端诊断记录。')
+      if (loadLatest && result.data[0]) await openDiagnosticRun(result.data[0], false)
+      if (showMessage) flash('success', '诊断历史已刷新。')
+    } catch (error) {
+      setDiagnosticSyncMessage('后端诊断历史暂不可用，继续使用本地结果。')
+      if (showMessage) flash('error', `读取诊断历史失败：${error instanceof Error ? error.message : '未知错误'}`)
+    } finally {
+      setDiagnosticLoading(false)
+    }
+  }
+
+  async function openDiagnosticRun(run: BackendDiagnosticRun, showMessage = true) {
+    try {
+      const response = await fetch(`${backendApiBase}/api/diagnostics/${encodeURIComponent(run.id)}`, {
+        headers: { Authorization: `Bearer ${backendToken}` },
+      })
+      const result = await response.json() as BackendResult<BackendDiagnosticRunResponse>
+      if (!response.ok || result.code !== 200 || !result.data?.run) throw new Error(result.message || '读取诊断详情失败')
+      setCheckIssues((result.data.issues || []).map(diagnosticIssueFromBackend))
+      setViralDiagnosis(null)
+      setDiagnosticSyncMessage(`正在查看：${result.data.run.title}`)
+      if (showMessage) flash('success', '已打开诊断记录。')
+    } catch (error) {
+      if (showMessage) flash('error', `读取诊断详情失败：${error instanceof Error ? error.message : '未知错误'}`)
+    }
+  }
+
+  async function persistDiagnosticRun(
+    runType: DiagnosticRunType,
+    title: string,
+    issues: CheckIssue[],
+    options: { mode?: 'local-rules' | 'web-ai' | 'model-api'; summary?: string; overallScore?: number } = {},
+  ) {
+    if (!canSyncDiagnostics || !work.backendNovelId || !currentChapter.backendChapterId) {
+      setDiagnosticSyncMessage('诊断结果已保存在本地；作品同步后可写入后端历史。')
+      return false
+    }
+    try {
+      const response = await fetch(`${backendApiBase}/api/diagnostics`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${backendToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          novelId: work.backendNovelId,
+          chapterId: currentChapter.backendChapterId,
+          runType,
+          mode: options.mode || 'local-rules',
+          title,
+          summary: options.summary || `${issues.length} 个问题，其中高风险 ${issues.filter((issue) => issue.severity === 'high').length} 个。`,
+          overallScore: options.overallScore,
+          inputSnapshot: `${currentChapter.title}\n${currentChapter.content}`.slice(0, 30000),
+          issues: issues.map(diagnosticIssueToBackend),
+        }),
+      })
+      const result = await response.json() as BackendResult<BackendDiagnosticRunResponse>
+      if (!response.ok || result.code !== 200 || !result.data?.run?.id) throw new Error(result.message || '保存诊断运行失败')
+      setCheckIssues((result.data.issues || []).map(diagnosticIssueFromBackend))
+      setDiagnosticRuns((current) => [result.data.run, ...current.filter((run) => run.id !== result.data.run.id)].slice(0, 12))
+      setDiagnosticSyncMessage(`诊断已保存：${result.data.run.title}`)
+      void transitionWorkflowStage('diagnosing', 'diagnostic', '章节诊断已完成，进入问题确认阶段', 'diagnostic-run', result.data.run.id)
+      return true
+    } catch (error) {
+      setDiagnosticSyncMessage(`后端保存失败，本地诊断仍然可用：${error instanceof Error ? error.message : '未知错误'}`)
+      return false
+    }
+  }
+
+  async function createCurrentBackendChapterVersion(source: 'manual-snapshot' | 'ai-adopt', changeSummary: string, content?: string) {
+    if (!backendToken || !currentChapter.backendChapterId) return false
+    setBackendChapterVersionsLoading(true)
+    try {
+      if (typeof content === 'string') {
+        const updateResponse = await fetch(`${backendApiBase}/api/chapter/${encodeURIComponent(currentChapter.backendChapterId)}`, {
+          method: 'PUT',
+          headers: {
+            Authorization: `Bearer ${backendToken}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            title: currentChapter.title,
+            content,
+            status: currentChapter.status,
+          }),
+        })
+        if (!updateResponse.ok) throw new Error(`更新章节失败：HTTP ${updateResponse.status}`)
+      }
+      const response = await fetch(`${backendApiBase}/api/chapter/${encodeURIComponent(currentChapter.backendChapterId)}/versions`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${backendToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ source, changeSummary }),
+      })
+      if (!response.ok) throw new Error(`创建版本失败：HTTP ${response.status}`)
+      const result = await response.json() as BackendResult<BackendChapterVersion>
+      if (result.code !== 200 || !result.data?.id) throw new Error(result.message || '创建章节版本失败')
+      await refreshBackendChapterVersions(false)
+      if (source === 'ai-adopt') void transitionWorkflowStage('confirming', 'rewrite', '已采用改稿版本，等待确认正文和记忆', 'chapter-version', result.data.id)
+      return true
+    } catch (error) {
+      flash('error', `章节版本保存失败：${error instanceof Error ? error.message : '未知错误'}`)
+      return false
+    } finally {
+      setBackendChapterVersionsLoading(false)
+    }
+  }
+
+  function createManualVersionSnapshot() {
+    onCreateVersion?.()
+    if (!backendToken || !currentChapter.backendChapterId) return
+    void createCurrentBackendChapterVersion('manual-snapshot', '用户手动保留当前章节版本').then((saved) => {
+      if (saved) flash('success', '本地作品快照和当前章节云端版本均已保留。')
+    })
+  }
+
+  async function restoreBackendChapterVersion(version: BackendChapterVersion) {
+    if (!backendToken || !currentChapter.backendChapterId) return
+    if (!window.confirm(`确认恢复到章节版本 V${version.versionNumber} 吗？后端会先自动备份当前正文。`)) return
+    setBackendChapterVersionsLoading(true)
+    try {
+      const response = await fetch(`${backendApiBase}/api/chapter/${encodeURIComponent(currentChapter.backendChapterId)}/versions/${encodeURIComponent(version.id)}/restore`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${backendToken}` },
+      })
+      if (!response.ok) throw new Error(`HTTP ${response.status}`)
+      const result = await response.json() as BackendResult<BackendChapterVersion>
+      if (result.code !== 200 || !result.data?.id) throw new Error(result.message || '恢复章节版本失败')
+      updateChapter({
+        title: result.data.title || currentChapter.title,
+        content: result.data.content || '',
+      })
+      await refreshBackendChapterVersions(false)
+      flash('success', `已恢复到 V${version.versionNumber}，恢复前正文也已自动留档。`)
+    } catch (error) {
+      flash('error', `恢复章节版本失败：${error instanceof Error ? error.message : '未知错误'}`)
+    } finally {
+      setBackendChapterVersionsLoading(false)
+    }
+  }
+
+  async function refreshBackendRewriteLogs(showMessage = true, nextOffset = 0) {
     if (!backendToken || !work.backendNovelId) {
       setBackendRewriteLogs([])
+      setBackendRewriteLogTotal(0)
+      setBackendRewriteLogTotalTokens(0)
+      setBackendRewriteLogLatestTime('')
+      return
+    }
+    if (backendRewriteLogScope === 'current' && !currentChapter.backendChapterId) {
+      setBackendRewriteLogs([])
+      setBackendRewriteLogTotal(0)
+      setBackendRewriteLogTotalTokens(0)
+      setBackendRewriteLogLatestTime('')
       return
     }
     setBackendRewriteLogsLoading(true)
     try {
-      const response = await fetch(`${backendApiBase}/api/chapters/rewrite/logs?novelId=${encodeURIComponent(work.backendNovelId)}`, {
+      const params = new URLSearchParams({
+        novelId: work.backendNovelId,
+        offset: String(nextOffset),
+        limit: '8',
+      })
+      if (backendRewriteLogScope === 'current' && currentChapter.backendChapterId) {
+        params.set('chapterId', currentChapter.backendChapterId)
+      }
+      const response = await fetch(`${backendApiBase}/api/chapters/rewrite/logs?${params.toString()}`, {
         headers: { Authorization: `Bearer ${backendToken}` },
       })
       if (!response.ok) throw new Error(`HTTP ${response.status}`)
-      const result = await response.json() as BackendResult<BackendRewriteLog[]>
+      const result = await response.json() as BackendResult<BackendRewriteLogListResponse | BackendRewriteLog[]>
       if (result.code !== 200) throw new Error(result.message || '读取 API 改稿历史失败')
-      setBackendRewriteLogs(Array.isArray(result.data) ? result.data.slice(0, 12) : [])
+      const data = result.data
+      const nextLogs = Array.isArray(data) ? data : data?.logs ?? []
+      setBackendRewriteLogs((current) => nextOffset > 0 ? [...current, ...nextLogs] : nextLogs)
+      setBackendRewriteLogTotal(Array.isArray(data) ? nextLogs.length : data?.total ?? nextLogs.length)
+      setBackendRewriteLogTotalTokens(Array.isArray(data) ? nextLogs.reduce((sum, log) => sum + (log.tokenUsage || 0), 0) : data?.totalTokenUsage ?? 0)
+      setBackendRewriteLogLatestTime(Array.isArray(data) ? nextLogs[0]?.createTime || '' : data?.latestCreateTime || '')
       if (showMessage) flash('success', 'API 改稿历史已刷新。')
     } catch (error) {
       if (showMessage) flash('error', `读取 API 改稿历史失败：${error instanceof Error ? error.message : '未知错误'}`)
+    } finally {
+      setBackendRewriteLogsLoading(false)
+    }
+  }
+
+  function loadMoreBackendRewriteLogs() {
+    void refreshBackendRewriteLogs(false, backendRewriteLogs.length)
+  }
+
+  async function deleteBackendRewriteLog(log: BackendRewriteLog) {
+    if (!backendToken || !work.backendNovelId) return
+    if (!window.confirm('确认删除这条 API 改稿历史吗？删除后不会影响正文和已保存的本地产物记录。')) return
+    setBackendRewriteLogsLoading(true)
+    try {
+      const response = await fetch(`${backendApiBase}/api/chapters/rewrite/logs/${encodeURIComponent(log.id)}?novelId=${encodeURIComponent(work.backendNovelId)}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${backendToken}` },
+      })
+      if (!response.ok) throw new Error(`HTTP ${response.status}`)
+      const result = await response.json() as BackendResult<void>
+      if (result.code !== 200) throw new Error(result.message || '删除 API 改稿历史失败')
+      setBackendRewriteLogs((current) => current.filter((item) => item.id !== log.id))
+      setBackendRewriteLogTotal((current) => Math.max(0, current - 1))
+      setBackendRewriteLogTotalTokens((current) => Math.max(0, current - (log.tokenUsage || 0)))
+      flash('success', 'API 改稿历史已删除。')
+    } catch (error) {
+      flash('error', `删除 API 改稿历史失败：${error instanceof Error ? error.message : '未知错误'}`)
     } finally {
       setBackendRewriteLogsLoading(false)
     }
@@ -757,14 +1243,37 @@ export function WritingWorkspace({
       createdAt: new Date().toLocaleString(),
     })
     updateChapter({ content })
+    void createCurrentBackendChapterVersion(
+      'ai-adopt',
+      `采用 AI 改稿：${originalCharCount} 字调整为 ${replacementCharCount} 字`,
+      content,
+    ).then((saved) => {
+      if (saved) flash('success', '改稿已采用，并保存为独立章节版本。')
+    })
     setSelectedRewriteText('')
     setSelectedRewriteRange(null)
     setRewriteApplyText('')
     flash('success', '已替换选中文本，并保存本地替换记录。')
   }
 
-  function updateIssueStatus(id: string, nextStatus: CheckIssue['status']) {
+  async function updateIssueStatus(id: string, nextStatus: CheckIssue['status']) {
     setCheckIssues((current) => current.map((issue) => issue.id === id ? { ...issue, status: nextStatus } : issue))
+    if (!canSyncDiagnostics || !isUuid(id)) return
+    try {
+      const response = await fetch(`${backendApiBase}/api/diagnostics/issues/${encodeURIComponent(id)}/status`, {
+        method: 'PUT',
+        headers: {
+          Authorization: `Bearer ${backendToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ status: nextStatus }),
+      })
+      const result = await response.json() as BackendResult<BackendDiagnosticIssue>
+      if (!response.ok || result.code !== 200) throw new Error(result.message || '更新问题状态失败')
+      setDiagnosticSyncMessage(nextStatus === 'resolved' ? '问题已标记为处理完成并同步。' : nextStatus === 'ignored' ? '问题已忽略并同步。' : '问题已重新打开并同步。')
+    } catch (error) {
+      setDiagnosticSyncMessage(`问题状态后端同步失败，本地状态已保留：${error instanceof Error ? error.message : '未知错误'}`)
+    }
   }
 
   function copySuggestion(text: string) {
@@ -774,10 +1283,21 @@ export function WritingWorkspace({
 
   function insertSuggestion(text: string) {
     updateChapter({ content: `${currentChapter.content}\n\n【修改区】${text}` })
+    void transitionWorkflowStage('revising', 'diagnostic', '已把诊断建议插入修改区', 'none')
     flash('success', '建议已插入到正文末尾的修改区。')
   }
 
   function openAssistantSearchResult(result: AssistantSearchResult) {
+    if (result.workId && result.workId !== work.id) {
+      const targetWork = searchableWorks.find((item) => item.id === result.workId)
+      if (!targetWork || !onOpenWork) {
+        flash('error', '没有找到目标作品，无法打开跨作品搜索结果。')
+        return
+      }
+      onOpenWork(targetWork)
+      flash('success', `已打开作品：${targetWork.title}`)
+      return
+    }
     setView(result.targetView)
     if (result.kind === 'chapter') {
       setSelectedChapterId(result.id)
@@ -802,6 +1322,107 @@ export function WritingWorkspace({
       }
     })
     onWorkChange(applyWorkspaceChapters(work, nextChapters))
+  }
+
+  function saveChapterTask(task: ChapterTask) {
+    const nextTasks = chapterTasks.some((item) => item.chapterId === task.chapterId)
+      ? chapterTasks.map((item) => item.chapterId === task.chapterId ? task : item)
+      : [...chapterTasks, task]
+    onWorkChange({ ...work, chapterTasks: nextTasks, updatedAt: '刚刚' })
+  }
+
+  function updateCurrentTask(patch: Partial<ChapterTask>) {
+    const base = currentTask ?? buildLocalChapterTask(work, currentChapter, currentChapter, memoryEntries)
+    const next = { ...base, ...patch, chapterId: currentChapter.id, updatedAt: '刚刚' }
+    saveChapterTask(next)
+    if (patch.status && patch.status !== base.status) void syncChapterTask(next, false)
+  }
+
+  function generateCurrentTask() {
+    const task = buildLocalChapterTask(work, currentChapter, currentChapter, memoryEntries)
+    saveChapterTask(task)
+    void syncChapterTask(task, false)
+    setView('task')
+    flash('success', '已根据作品资料、章节结尾和已确认记忆生成任务卡草稿。')
+  }
+
+  async function refreshCurrentChapterTask(showMessage = true) {
+    if (!canSyncChapterTask || !currentChapter.backendChapterId) {
+      setChapterTaskVersions([])
+      setChapterTaskSyncMessage('任务卡当前随本地作品保存；章节同步后可写入独立后端版本。')
+      return
+    }
+    try {
+      const headers = { Authorization: `Bearer ${backendToken}` }
+      const [currentResponse, versionsResponse] = await Promise.all([
+        fetch(`${backendApiBase}/api/chapter-tasks/current?chapterId=${encodeURIComponent(currentChapter.backendChapterId)}`, { headers }),
+        fetch(`${backendApiBase}/api/chapter-tasks/versions?chapterId=${encodeURIComponent(currentChapter.backendChapterId)}`, { headers }),
+      ])
+      const currentResult = await currentResponse.json() as BackendResult<BackendChapterTask | null>
+      const versionsResult = await versionsResponse.json() as BackendResult<BackendChapterTask[]>
+      if (!currentResponse.ok || currentResult.code !== 200) throw new Error(currentResult.message || '读取任务卡失败')
+      if (!versionsResponse.ok || versionsResult.code !== 200) throw new Error(versionsResult.message || '读取任务卡版本失败')
+      setChapterTaskVersions(Array.isArray(versionsResult.data) ? versionsResult.data : [])
+      if (currentResult.data) {
+        saveChapterTask(chapterTaskFromBackend(currentResult.data, currentChapter.id, currentTask))
+        setChapterTaskSyncMessage(`已读取任务卡 V${currentResult.data.versionNumber}。`)
+      } else {
+        setChapterTaskSyncMessage('当前章节暂无后端任务卡，生成或保存后会创建 V1。')
+      }
+      if (showMessage) flash('success', '任务卡已从后端刷新。')
+    } catch (error) {
+      setChapterTaskSyncMessage(`后端任务卡暂不可用，继续使用本地版本：${error instanceof Error ? error.message : '未知错误'}`)
+      if (showMessage) flash('error', '读取后端任务卡失败。')
+    }
+  }
+
+  async function syncChapterTask(task: ChapterTask, showMessage = true) {
+    if (!canSyncChapterTask || !work.backendNovelId || !currentChapter.backendChapterId) {
+      setChapterTaskSyncMessage('任务卡已保存在本地；先保存作品以建立后端章节后再同步。')
+      if (showMessage) flash('error', '当前章节尚未同步到后端。')
+      return false
+    }
+    try {
+      const response = await fetch(`${backendApiBase}/api/chapter-tasks${task.backendTaskId ? `/${encodeURIComponent(task.backendTaskId)}` : ''}`, {
+        method: task.backendTaskId ? 'PUT' : 'POST',
+        headers: { Authorization: `Bearer ${backendToken}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(chapterTaskToBackend(task, work.backendNovelId, currentChapter.backendChapterId)),
+      })
+      const result = await response.json() as BackendResult<BackendChapterTask>
+      if (!response.ok || result.code !== 200 || !result.data?.id) throw new Error(result.message || '保存任务卡失败')
+      saveChapterTask(chapterTaskFromBackend(result.data, currentChapter.id, task))
+      setChapterTaskSyncMessage(`任务卡已保存为后端 V${result.data.versionNumber}。`)
+      await refreshCurrentChapterTask(false)
+      if (result.data.status === 'active') void transitionWorkflowStage('writing', 'task', '任务卡已确认并进入写作', 'chapter-task', result.data.id)
+      if (showMessage) flash('success', `任务卡 V${result.data.versionNumber} 已保存。`)
+      return true
+    } catch (error) {
+      setChapterTaskSyncMessage(`后端保存失败，本地任务卡未丢失：${error instanceof Error ? error.message : '未知错误'}`)
+      if (showMessage) flash('error', '任务卡后端保存失败。')
+      return false
+    }
+  }
+
+  function createNextChapterWithTask() {
+    const nextNumber = chapters.reduce((max, chapter) => Math.max(max, chapter.chapterNumber), 0) + 1
+    const nextChapter: WorkChapter = {
+      id: `chapter-${Date.now()}`,
+      chapterNumber: nextNumber,
+      title: `第 ${nextNumber} 章`,
+      content: '',
+      status: 'draft',
+      wordCount: 0,
+      createdAt: '刚刚',
+      updatedAt: '刚刚',
+    }
+    const nextTask = buildLocalChapterTask(work, currentChapter, nextChapter, memoryEntries)
+    onWorkChange({
+      ...applyWorkspaceChapters(work, [...chapters, nextChapter]),
+      chapterTasks: [...chapterTasks, nextTask],
+    })
+    setSelectedChapterId(nextChapter.id)
+    setView('task')
+    flash('success', '已创建下一章和任务卡草稿，请确认目标后开始写作。')
   }
 
   function createChapter() {
@@ -830,15 +1451,97 @@ export function WritingWorkspace({
     const target = chapters.find((chapter) => chapter.id === id)
     if (!target || !window.confirm(`确认删除「${target.title}」吗？保存后后端章节也会同步删除。`)) return
     const nextChapters = chapters.filter((chapter) => chapter.id !== id).map((chapter, index) => ({ ...chapter, chapterNumber: index + 1, updatedAt: '刚刚' }))
-    onWorkChange(applyWorkspaceChapters(work, nextChapters))
+    onWorkChange({
+      ...applyWorkspaceChapters(work, nextChapters),
+      chapterTasks: chapterTasks.filter((task) => task.chapterId !== id),
+    })
     setSelectedChapterId(nextChapters[0]?.id || '')
     flash('success', '章节已删除，保存后生效。')
   }
 
   function togglePublishChapter(id: string) {
-    const nextChapters = chapters.map((chapter) => chapter.id === id ? { ...chapter, status: chapter.status === 'published' ? 'draft' as const : 'published' as const, updatedAt: '刚刚' } : chapter)
+    const target = chapters.find((chapter) => chapter.id === id)
+    const nextStatus = target?.status === 'published' ? 'draft' as const : 'published' as const
+    const nextChapters = chapters.map((chapter) => chapter.id === id ? { ...chapter, status: nextStatus, updatedAt: '刚刚' } : chapter)
     onWorkChange(applyWorkspaceChapters(work, nextChapters))
+    if (id === currentChapter.id && nextStatus === 'published') void transitionWorkflowStage('publish-ready', 'publish', '章节已标记发布，进入发布准备', 'none')
     flash('success', '章节发布状态已更新，保存后会同步。')
+  }
+
+  async function refreshWorkflowState(showMessage = true) {
+    if (!canSyncWorkflow || !currentChapter.backendChapterId) {
+      setWorkflowState(null)
+      setWorkflowHistory([])
+      setWorkflowMessage('本地阶段')
+      return
+    }
+    try {
+      const headers = { Authorization: `Bearer ${backendToken}` }
+      const [currentResponse, historyResponse] = await Promise.all([
+        fetch(`${backendApiBase}/api/chapter-workflow/current?chapterId=${encodeURIComponent(currentChapter.backendChapterId)}`, { headers }),
+        fetch(`${backendApiBase}/api/chapter-workflow/history?chapterId=${encodeURIComponent(currentChapter.backendChapterId)}`, { headers }),
+      ])
+      const currentResult = await currentResponse.json() as BackendResult<BackendChapterWorkflowState | null>
+      const historyResult = await historyResponse.json() as BackendResult<BackendChapterWorkflowState[]>
+      if (!currentResponse.ok || currentResult.code !== 200) throw new Error(currentResult.message || '读取阶段失败')
+      if (!historyResponse.ok || historyResult.code !== 200) throw new Error(historyResult.message || '读取阶段历史失败')
+      setWorkflowState(currentResult.data || null)
+      setWorkflowHistory(Array.isArray(historyResult.data) ? historyResult.data : [])
+      setWorkflowMessage(currentResult.data ? `阶段 V${currentResult.data.versionNumber}` : '尚未开始')
+      if (showMessage) flash('success', '创作阶段已刷新。')
+    } catch (error) {
+      setWorkflowMessage(`阶段同步失败：${error instanceof Error ? error.message : '未知错误'}`)
+    }
+  }
+
+  async function transitionWorkflowStage(
+    target: WorkflowStage,
+    source: BackendChapterWorkflowState['transitionSource'] = 'user',
+    reason = '用户调整章节创作阶段',
+    referenceType: BackendChapterWorkflowState['referenceType'] = 'none',
+    referenceId?: string,
+  ) {
+    if (!canSyncWorkflow || !work.backendNovelId || !currentChapter.backendChapterId) {
+      setWorkflowMessage(`本地阶段：${workflowStageText[target]}`)
+      return false
+    }
+    try {
+      let currentStage = workflowState?.stage
+      if (!currentStage) {
+        const initialized = await postWorkflowTransition('planning', 'system', '初始化章节创作阶段', 'none')
+        currentStage = initialized.stage
+      }
+      const path = findWorkflowStagePath(currentStage, target)
+      if (!path) throw new Error(`无法从${workflowStageText[currentStage]}进入${workflowStageText[target]}`)
+      let latest = workflowState
+      for (const stage of path) {
+        latest = await postWorkflowTransition(stage, stage === target ? source : 'system', stage === target ? reason : '自动衔接创作阶段', stage === target ? referenceType : 'none', stage === target ? referenceId : undefined)
+        setWorkflowState(latest)
+      }
+      setWorkflowMessage(latest ? `阶段 V${latest.versionNumber}` : workflowStageText[target])
+      await refreshWorkflowState(false)
+      return true
+    } catch (error) {
+      setWorkflowMessage(`阶段推进失败：${error instanceof Error ? error.message : '未知错误'}`)
+      return false
+    }
+  }
+
+  async function postWorkflowTransition(
+    stage: WorkflowStage,
+    source: BackendChapterWorkflowState['transitionSource'],
+    reason: string,
+    referenceType: BackendChapterWorkflowState['referenceType'],
+    referenceId?: string,
+  ) {
+    const response = await fetch(`${backendApiBase}/api/chapter-workflow/transition`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${backendToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ novelId: work.backendNovelId, chapterId: currentChapter.backendChapterId, stage, source, reason, referenceType, referenceId }),
+    })
+    const result = await response.json() as BackendResult<BackendChapterWorkflowState>
+    if (!response.ok || result.code !== 200 || !result.data?.id) throw new Error(result.message || '阶段推进失败')
+    return result.data
   }
 
   function moveChapter(id: string, direction: -1 | 1) {
@@ -872,29 +1575,37 @@ export function WritingWorkspace({
     }
     if (!window.confirm(`确认删除 ${selectedChapterIds.length} 个选中章节吗？`)) return
     const nextChapters = chapters.filter((chapter) => !selectedChapterIds.includes(chapter.id))
-    onWorkChange(applyWorkspaceChapters(work, nextChapters))
+    onWorkChange({
+      ...applyWorkspaceChapters(work, nextChapters),
+      chapterTasks: chapterTasks.filter((task) => !selectedChapterIds.includes(task.chapterId)),
+    })
     setSelectedChapterIds([])
     if (!nextChapters.some((chapter) => chapter.id === currentChapter.id)) setSelectedChapterId(nextChapters[0]?.id || '')
     flash('success', '选中章节已删除，保存后生效。')
   }
 
-  function runBackendCheck() {
-    if (!backendToken) {
-      recordArtifact('check', `${currentChapter.title} 后端分析入口`, '当前未登录或后端 token 不可用。本次保留本地规则检查与 Web AI Prompt 路径；登录并连接后端后可优先尝试后端章节分析。', 'local')
-      flash('error', '后端分析需要登录并连接后端；已保留本地检查入口。')
-      return
-    }
-    runLocalCheck()
-    recordArtifact('check', `${currentChapter.title} 后端分析回退`, '已检测到登录 token，但当前前端作品尚未绑定真实后端 novelId/chapterId，因此本次使用本地 OOC / 伏笔规则检查作为 MVP 回退。', 'local')
-  }
-
-  function syncMemorySummary() {
+  async function syncMemorySummary() {
     const confirmed = memoryEntries.filter((entry) => normalizeMemoryEntry(entry).status === 'confirmed')
     const content = confirmed.length
       ? confirmed.map((entry) => `- ${entry.title}: ${entry.content}`).join('\n')
       : memoryEntries.map((entry) => `- ${entry.title}: ${entry.content}`).join('\n')
-    recordArtifact('summary', `${work.title} 记忆摘要`, content || '当前还没有可同步的长篇记忆。', backendToken ? 'backend' : 'local')
-    flash(backendToken ? 'success' : 'error', backendToken ? '已生成可提交到后端记忆摘要的本地记录。' : '当前未连接后端，已先保存本地记忆摘要记录。')
+    if (!canSyncMemory || !work.backendNovelId) {
+      recordArtifact('summary', `${work.title} 记忆摘要`, content || '当前还没有可同步的长篇记忆。', 'local')
+      flash('error', '当前作品尚未连接后端，已保留本地记忆。')
+      return
+    }
+    setWorkspaceStatus('loading')
+    setWorkspaceMessage('正在同步长篇记忆...')
+    try {
+      const synced = await Promise.all(memoryEntries.map((entry) => saveMemoryToBackend(entry, work.backendNovelId || '', backendToken, chapters)))
+      setMemoryEntries(synced)
+      setMemorySyncMessage(`已同步 ${synced.length} 条长篇记忆。`)
+      recordArtifact('summary', `${work.title} 记忆摘要`, content || '当前还没有可同步的长篇记忆。', 'backend')
+      flash('success', `已同步 ${synced.length} 条长篇记忆到后端。`)
+    } catch (error) {
+      setMemorySyncMessage('部分或全部记忆同步失败，本地内容未丢失。')
+      flash('error', `记忆同步失败：${error instanceof Error ? error.message : '未知错误'}`)
+    }
   }
 
   function openWebAi(target: WebAiTarget) {
@@ -910,7 +1621,11 @@ export function WritingWorkspace({
     }
     if (webAiTarget === 'check') {
       const parsedIssues = parseCheckIssues(webAiResult)
-      setCheckIssues((current) => [...parsedIssues, ...current])
+      setCheckIssues(parsedIssues)
+      void persistDiagnosticRun('web-ai', `${currentChapter.title} Web AI 检查`, parsedIssues, {
+        mode: 'web-ai',
+        summary: '从外部 Web AI 返回结果解析并保存的证据化诊断。',
+      })
       recordArtifact('web-ai', 'Web AI 检查结果', webAiResult, 'web-ai')
       setView('checks')
       flash('success', '网页 AI 检查结果已解析为卡片。')
@@ -1066,9 +1781,9 @@ export function WritingWorkspace({
   const combinedMessage = workspaceMessage || message
 
   return (
-    <main className="yixie-editorial min-h-[calc(100vh-5rem)] bg-[#edf1ee] p-4 text-slate-950">
-      <div className="mx-auto min-h-[calc(100vh-7rem)] max-w-[1540px] overflow-hidden rounded-lg border border-white/70 bg-white/72 shadow-[0_24px_80px_rgba(15,23,42,0.10)] backdrop-blur">
-        <header className="flex h-[68px] items-center gap-5 border-b border-[#d8e5e4] bg-white/62 px-6">
+    <main className="yixie-editorial min-h-screen bg-[#edf1ee] p-3 text-slate-950">
+      <div className="mx-auto min-h-[calc(100vh-1.5rem)] max-w-[1680px] overflow-visible rounded-lg border border-white/70 bg-white/72 shadow-[0_20px_64px_rgba(15,23,42,0.09)] backdrop-blur min-[1180px]:h-[calc(100vh-1.5rem)] min-[1180px]:min-h-[720px] min-[1180px]:overflow-hidden">
+        <header className="flex min-h-[68px] flex-wrap items-center gap-3 border-b border-[#d8e5e4] bg-white/62 px-4 py-3 lg:flex-nowrap lg:gap-5 lg:px-6 lg:py-0">
           <button onClick={onBackHome} className="flex items-center gap-2 text-sm font-semibold text-[#2f7f86]">
             <BookOpen className="h-5 w-5" />
             {work.title}
@@ -1078,15 +1793,30 @@ export function WritingWorkspace({
           <span className={cn('rounded-full px-3 py-1 text-xs font-medium', work.syncState === 'local-only' ? 'bg-amber-50 text-amber-700' : 'bg-emerald-50 text-emerald-700')}>
             {work.syncState === 'local-only' ? '本地保存 · 未同步' : '正式作品 · 已同步'}
           </span>
-          <div className="ml-auto flex items-center gap-3 text-sm text-slate-500">
+          <select value={workflowState?.stage || 'planning'} onChange={(event) => void transitionWorkflowStage(event.target.value as WorkflowStage)} className="rounded-md border border-[#d8e5e4] bg-white px-2 py-1.5 text-xs font-semibold text-[#2f7f86] outline-none" title={workflowMessage}>
+            {workflowStageOrder.map((stage) => <option key={stage} value={stage}>{workflowStageText[stage]}</option>)}
+          </select>
+          <div className="ml-auto flex flex-wrap items-center justify-end gap-2 text-sm text-slate-500 lg:gap-3">
             <span>字数：{wordCount.toLocaleString()} 字</span>
             <span className="flex items-center gap-1"><CheckCircle2 className="h-4 w-4 text-emerald-500" /> 自动保存预览</span>
-            <button onClick={onSave} className="inline-flex items-center gap-2 rounded-md bg-slate-950 px-5 py-2.5 text-sm font-semibold text-white hover:bg-slate-800">
+            <button onClick={() => onSave(currentChapter)} className="inline-flex items-center gap-2 rounded-md bg-slate-950 px-5 py-2.5 text-sm font-semibold text-white hover:bg-slate-800">
               <Save className="h-4 w-4" />
               保存
             </button>
           </div>
         </header>
+
+        <div className="border-b border-[#d8e5e4] bg-white/45 px-4 py-2 lg:px-6">
+          <div className="grid grid-cols-4 gap-1.5 md:grid-cols-8">
+            {workflowStageOrder.map((stage, index) => {
+              const currentIndex = workflowStageOrder.indexOf(workflowState?.stage || 'planning')
+              const active = stage === (workflowState?.stage || 'planning')
+              const passed = index < currentIndex
+              return <button key={stage} onClick={() => void transitionWorkflowStage(stage)} className={cn('rounded px-2 py-1.5 text-[11px] font-semibold transition', active ? 'bg-[#2f7f86] text-white' : passed ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500 hover:bg-slate-200')}>{index + 1}. {workflowStageText[stage]}</button>
+            })}
+          </div>
+          <div className="mt-1 flex items-center justify-between text-[10px] text-slate-400"><span>{workflowMessage}</span><span>{workflowHistory.length > 0 ? `${workflowHistory.length} 次阶段记录` : '本地状态'}</span></div>
+        </div>
 
         {combinedMessage && (
           <div className={cn('mx-6 mt-4 rounded-md border px-4 py-3 text-sm', combinedStatus === 'error' ? 'border-red-200 bg-red-50 text-red-700' : combinedStatus === 'success' ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-blue-200 bg-blue-50 text-blue-700')}>
@@ -1095,8 +1825,8 @@ export function WritingWorkspace({
           </div>
         )}
 
-        <div className="grid h-[calc(100vh-10rem)] min-h-[680px] grid-cols-[270px_minmax(0,1fr)_310px] gap-0 p-4">
-          <aside className="mr-4 flex min-h-0 flex-col gap-4">
+        <div className="grid min-h-[620px] grid-cols-1 gap-3 p-3 min-[1180px]:h-[calc(100vh-9.5rem)] min-[1180px]:grid-cols-[250px_minmax(0,1fr)_300px] min-[1180px]:gap-0 min-[1180px]:p-4">
+          <aside className="order-2 flex min-h-0 flex-col gap-3 min-[1180px]:order-none min-[1180px]:mr-4 min-[1180px]:gap-4">
             <section className="rounded-lg border border-white/70 bg-white/72 p-4 shadow-sm backdrop-blur">
               <div className="flex items-center justify-between">
                 <h2 className="font-semibold">章节目录</h2>
@@ -1117,6 +1847,7 @@ export function WritingWorkspace({
               )}
               <div className="mt-3 space-y-2 text-sm">
                 <SideButton active={view === 'overview'} icon={BookOpen} label="作品总览" onClick={() => setView('overview')} />
+                <SideButton active={view === 'task'} icon={Clipboard} label="下一章任务卡" count={chapterTasks.filter((task) => task.status !== 'completed').length} onClick={() => setView('task')} />
                 {chapters.map((chapter, index) => (
                   <ChapterNavItem
                     key={chapter.id}
@@ -1146,28 +1877,14 @@ export function WritingWorkspace({
                 </button>
               </div>
               <div className="mt-3 space-y-1 text-sm">
-                {(Object.keys(loreTypeLabels) as LoreType[]).map((type) => {
-                  const Icon = loreTypeIcons[type]
-                  return (
-                    <SideButton
-                      key={type}
-                      icon={Icon}
-                      label={loreTypeLabels[type]}
-                      count={loreEntries.filter((entry) => entry.type === type).length}
-                      active={view === 'lore' && loreFilter === type}
-                      onClick={() => {
-                        setLoreFilter(type)
-                        setView('lore')
-                      }}
-                    />
-                  )
-                })}
+                <SideButton icon={Database} label="资料库" count={loreEntries.length} active={view === 'lore' && loreFilter === 'all'} onClick={() => { setLoreFilter('all'); setView('lore') }} />
+                <SideButton icon={Link2} label="伏笔线索" count={loreEntries.filter((entry) => entry.type === 'foreshadow').length} active={view === 'lore' && loreFilter === 'foreshadow'} onClick={() => { setLoreFilter('foreshadow'); setView('lore') }} />
                 <SideButton icon={Brain} label="长篇记忆" count={memoryEntries.length} active={view === 'memory'} onClick={() => setView('memory')} />
               </div>
             </section>
           </aside>
 
-          <section className="min-w-0 rounded-lg border border-white/70 bg-white/82 shadow-sm backdrop-blur">
+          <section className="order-1 min-h-[620px] min-w-0 rounded-lg border border-white/70 bg-white/82 shadow-sm backdrop-blur min-[1180px]:order-none min-[1180px]:min-h-0">
             {view === 'overview' && (
               <OverviewView
                 work={work}
@@ -1185,9 +1902,10 @@ export function WritingWorkspace({
                 chapter={currentChapter}
                 rewriteInstruction={rewriteInstruction}
                 selectedRewriteText={selectedRewriteText}
-                rewriteApplyText={rewriteApplyText}
-                backendRewriteLoading={backendRewriteLoading}
-                backendRewriteOptions={backendRewriteOptions}
+              rewriteApplyText={rewriteApplyText}
+              backendRewriteLoading={backendRewriteLoading}
+              backendRewriteStreamText={backendRewriteStreamText}
+              backendRewriteOptions={backendRewriteOptions}
                 onChapterChange={updateChapter}
                 onGenerateSummary={generateChapterSummary}
                 onTogglePublish={() => togglePublishChapter(currentChapter.id)}
@@ -1203,6 +1921,20 @@ export function WritingWorkspace({
                 onCancelBackendRewrite={cancelBackendRewrite}
                 onOpenRewriteWebAi={() => openWebAi('rewrite')}
                 onApplyRewriteToSelection={applyRewriteToSelection}
+              />
+            )}
+            {view === 'task' && (
+              <ChapterTaskView
+                chapter={currentChapter}
+                task={currentTask}
+                versions={chapterTaskVersions}
+                syncMessage={chapterTaskSyncMessage}
+                onGenerate={generateCurrentTask}
+                onChange={updateCurrentTask}
+                onSave={() => currentTask && syncChapterTask(currentTask)}
+                onRefresh={() => refreshCurrentChapterTask(true)}
+                onOpenEditor={() => setView('editor')}
+                onCreateNext={createNextChapterWithTask}
               />
             )}
             {view === 'lore' && (
@@ -1227,6 +1959,7 @@ export function WritingWorkspace({
               <MemoryView
                 entries={memoryEntries}
                 stats={memoryStats}
+                syncMessage={memorySyncMessage}
                 onGenerateSummary={generateChapterSummary}
                 onExtractCandidates={extractMemoryCandidates}
                 onAdd={addMemory}
@@ -1241,6 +1974,9 @@ export function WritingWorkspace({
               <ChecksView
                 issues={checkIssues}
                 viralSummary={viralDiagnosis}
+                diagnosticRuns={diagnosticRuns}
+                diagnosticLoading={diagnosticLoading}
+                diagnosticSyncMessage={diagnosticSyncMessage}
                 onRunCheck={runLocalCheck}
                 onRunReadthroughDiagnosis={runReadthroughDiagnosis}
                 onRunHumanTasteRevision={runHumanTasteRevision}
@@ -1251,7 +1987,8 @@ export function WritingWorkspace({
                 onInsertSuggestion={insertSuggestion}
                 onStatusChange={updateIssueStatus}
                 onOpenWebAi={() => openWebAi('check')}
-                onRunBackendCheck={runBackendCheck}
+                onRefreshRuns={() => refreshDiagnosticRuns(true, false)}
+                onOpenRun={openDiagnosticRun}
               />
             )}
             {view === 'ip' && (
@@ -1269,22 +2006,29 @@ export function WritingWorkspace({
             )}
           </section>
 
-          <aside className="ml-4 rounded-lg border border-white/70 bg-[#f6fbfa]/82 p-4 shadow-sm backdrop-blur">
+          <aside className="order-3 rounded-lg border border-white/70 bg-[#f6fbfa]/82 p-4 shadow-sm backdrop-blur min-[1180px]:order-none min-[1180px]:ml-4 min-[1180px]:min-h-0 min-[1180px]:overflow-y-auto">
             <div className="flex items-center justify-between">
               <h2 className="flex items-center gap-2 font-semibold"><MessageSquare className="h-5 w-5 text-[#2f7f86]" />创作任务</h2>
               <span className="rounded bg-white px-2 py-1 text-xs font-medium text-slate-500">当前章</span>
             </div>
             <div className="mt-4 grid grid-cols-3 gap-2">
               <PilotTab active={view === 'editor'} icon={PenLine} label="续写" onClick={() => setView('editor')} />
+              <PilotTab active={view === 'task'} icon={Clipboard} label="任务" onClick={() => setView('task')} />
               <PilotTab active={view === 'lore'} icon={Database} label="资料" onClick={() => setView('lore')} />
               <PilotTab active={view === 'memory'} icon={Brain} label="记忆" onClick={() => setView('memory')} />
               <PilotTab active={view === 'checks'} icon={ShieldAlert} label="检查" onClick={() => setView('checks')} />
               <PilotTab active={view === 'ip'} icon={Film} label="IP" onClick={() => setView('ip')} />
             </div>
             <div className="mt-5 rounded-md border border-[#d8e5e4] bg-white/78 p-3">
-              <div className="text-xs font-medium text-slate-500">下一步</div>
-              <p className="mt-2 text-sm leading-6 text-slate-700">{work.materials.nextStep || '继续推进当前章节目标。'}</p>
-              <button onClick={() => insertSuggestion(work.materials.nextStep || '继续推进当前章节目标。')} className="mt-3 text-sm font-semibold text-teal-700 hover:text-teal-800">插入到正文</button>
+              <div className="flex items-center justify-between gap-2">
+                <div className="text-xs font-medium text-slate-500">当前章任务</div>
+                <span className="text-[11px] text-slate-400">{currentTask ? chapterTaskStatusText[currentTask.status] : '未创建'}</span>
+              </div>
+              <p className="mt-2 text-sm leading-6 text-slate-700">{currentTask?.coreGoal || work.materials.nextStep || '继续推进当前章节目标。'}</p>
+              <div className="mt-3 flex gap-3 text-sm font-semibold">
+                <button onClick={() => currentTask ? setView('task') : generateCurrentTask()} className="text-teal-700 hover:text-teal-800">{currentTask ? '查看任务卡' : '生成任务卡'}</button>
+                <button onClick={createNextChapterWithTask} className="text-slate-600 hover:text-slate-900">规划下一章</button>
+              </div>
             </div>
             <LocalAssistantSearchPanel
               query={assistantSearchQuery}
@@ -1297,16 +2041,12 @@ export function WritingWorkspace({
               <PilotCard title="生成章节摘要" text={`${memoryEntries.length} 条记忆，${memoryEntries.filter((entry) => entry.type === 'open-foreshadow').length} 条伏笔`} action="生成" onAction={generateChapterSummary} />
               <PilotCard title="提取记忆候选" text="事件 / 人物 / 设定 / 伏笔" action="提取" onAction={extractMemoryCandidates} />
               <PilotCard title="检查人物与伏笔" text={openIssues.length ? `${openIssues.length} 条待处理` : '本地规则检查'} action="检查" onAction={runLocalCheck} />
-              <PilotCard title="爆款潜力诊断" text="卖点 / 钩子 / 爽点 / IP" action="诊断" onAction={runViralPotentialDiagnosis} />
-              <PilotCard title="改写 / 扩写 / 精修" text="本地改稿包，不覆盖正文" action="生成" onAction={() => runLocalRewritePackage(rewriteInstruction)} />
               <PilotCard title="追读诊断" text="钩子 / 目标 / 爽点 / 悬念" action="诊断" onAction={runReadthroughDiagnosis} />
-              <PilotCard title="人味修订" text="保守 / 强刺激 / 爽文方向" action="修订" onAction={runHumanTasteRevision} />
-              <PilotCard title="章节衍生" text="短剧 / 互动剧情游戏设定包" action="打开" onAction={() => setView('ip')} />
             </div>
             <VersionHistoryPanel
               records={versionRecords}
               canSync={Boolean(backendToken)}
-              onCreateVersion={onCreateVersion}
+              onCreateVersion={createManualVersionSnapshot}
               onManualSync={onManualSync}
               onRestoreVersion={onRestoreVersion}
             />
@@ -1314,8 +2054,23 @@ export function WritingWorkspace({
               logs={backendRewriteLogs}
               loading={backendRewriteLogsLoading}
               canLoad={Boolean(backendToken && work.backendNovelId)}
+              scope={backendRewriteLogScope}
+              currentChapterHasBackendId={Boolean(currentChapter.backendChapterId)}
+              total={backendRewriteLogTotal}
+              totalTokens={backendRewriteLogTotalTokens}
+              latestTime={backendRewriteLogLatestTime}
               onRefresh={() => void refreshBackendRewriteLogs(true)}
+              onScopeChange={setBackendRewriteLogScope}
+              onLoadMore={loadMoreBackendRewriteLogs}
               onAdopt={adoptBackendRewriteLog}
+              onDelete={(log) => void deleteBackendRewriteLog(log)}
+            />
+            <BackendChapterVersionPanel
+              versions={backendChapterVersions}
+              loading={backendChapterVersionsLoading}
+              canLoad={Boolean(backendToken && currentChapter.backendChapterId)}
+              onRefresh={() => void refreshBackendChapterVersions(true)}
+              onRestore={(version) => void restoreBackendChapterVersion(version)}
             />
             <ArtifactRunList records={artifactRecords} onCopy={copyArtifact} onInsert={insertArtifact} onDownload={downloadArtifact} />
           </aside>
@@ -1357,18 +2112,18 @@ function LocalAssistantSearchPanel({
           <Search className="h-4 w-4 text-teal-700" />
           本地助手搜索
         </h3>
-        <span className="rounded bg-teal-50 px-2 py-0.5 text-[11px] font-medium text-teal-700">安全操作 V0</span>
+        <span className="rounded bg-teal-50 px-2 py-0.5 text-[11px] font-medium text-teal-700">跨作品 V0</span>
       </div>
       <input
         value={query}
         onChange={(event) => onQueryChange(event.target.value)}
         className="mt-3 h-9 w-full rounded-md border border-slate-200 px-3 text-xs outline-none ring-teal-500/15 focus:ring-4"
-        placeholder="搜章节、设定、记忆、检查、产物..."
+        placeholder="搜章节、设定、记忆、检查、产物、其他作品..."
       />
       <div className="mt-3 space-y-2">
         {results.length === 0 ? (
           <div className="rounded-md border border-dashed border-slate-200 bg-slate-50 px-3 py-3 text-xs leading-5 text-slate-400">
-            输入关键词后，会在当前作品内检索，并只提供需要你确认的打开、复制或插入动作。
+            输入关键词后，会在当前作品和作品库内检索，并只提供需要你确认的打开、复制或插入动作。
           </div>
         ) : (
           results.map((result) => (
@@ -1657,11 +2412,13 @@ function countTextChars(value: string) {
 
 function buildAssistantSearchResults(
   query: string,
+  currentWork: SavedWork,
   chapters: WorkChapter[],
   loreEntries: LoreEntry[],
   memoryEntries: MemoryEntry[],
   checkIssues: CheckIssue[],
   artifactRecords: ArtifactRecord[],
+  works: SavedWork[] = [],
 ): AssistantSearchResult[] {
   const keyword = query.trim().toLowerCase()
   if (!keyword) return []
@@ -1731,7 +2488,53 @@ function buildAssistantSearchResults(
     })
   })
 
-  return results.slice(0, 8)
+  works
+    .filter((candidate) => candidate.id !== currentWork.id)
+    .forEach((candidate) => {
+      const candidateChapters = normalizeWorkspaceChapters(candidate)
+      const workText = [
+        candidate.title,
+        candidate.type,
+        candidate.summary,
+        candidate.description,
+        candidate.sellingPoint,
+        candidate.materials?.summary,
+        candidate.materials?.nextStep,
+        ...(candidate.tags || []),
+      ].filter(Boolean).join(' ').toLowerCase()
+      if (workText.includes(keyword)) {
+        results.push({
+          id: `work-${candidate.id}`,
+          kind: 'work',
+          workId: candidate.id,
+          title: `作品：${candidate.title}`,
+          excerpt: candidate.summary || `${candidateChapters.length} 章 · ${candidate.words || 0} 字 · ${candidate.status === 'official' ? '正式作品' : '本地草稿'}`,
+          targetView: 'overview',
+        })
+      }
+
+      candidateChapters.forEach((chapter) => {
+        const text = `${candidate.title} ${chapter.title} ${chapter.content}`.toLowerCase()
+        if (!text.includes(keyword)) return
+        results.push({
+          id: `${candidate.id}-${chapter.id}`,
+          kind: 'work-chapter',
+          workId: candidate.id,
+          chapterId: chapter.id,
+          title: `${candidate.title} / ${chapter.title || `第 ${chapter.chapterNumber} 章`}`,
+          excerpt: extractSearchExcerpt(chapter.content, keyword) || `${chapter.wordCount} 字 · ${chapter.status === 'published' ? '已发布' : '草稿'}`,
+          targetView: 'editor',
+        })
+      })
+    })
+
+  return results.slice(0, 12)
+}
+
+const chapterTaskStatusText: Record<ChapterTask['status'], string> = {
+  draft: '待确认',
+  active: '进行中',
+  completed: '已完成',
 }
 
 function extractSearchExcerpt(value: string, keyword: string) {
@@ -1752,6 +2555,8 @@ function assistantSearchKindText(kind: AssistantSearchKind) {
     memory: '记忆',
     issue: '检查',
     artifact: '产物',
+    work: '作品',
+    'work-chapter': '跨作品章节',
   }
   return labels[kind]
 }
@@ -1868,6 +2673,16 @@ function parseBackendRewriteLogResult(value: string): BackendRewriteResult {
       riskNotes: ['历史响应不是标准 JSON，已按原始文本再次采用；替换前请人工检查。'],
     }
   }
+}
+
+function normalizeBackendRewriteStreamText(value: string) {
+  if (!value.includes('data:')) return value
+  return value
+    .split(/\r?\n/)
+    .filter((line) => line.startsWith('data:'))
+    .map((line) => line.slice(5).trimStart())
+    .filter((line) => line !== '[DONE]')
+    .join('')
 }
 
 function extractJsonObject(value: string) {
@@ -2063,6 +2878,7 @@ function normalizeWorkspaceWork(work: SavedWork): SavedWork {
     chapterTitle: firstChapter?.title || work.chapterTitle || '未命名章节',
     chapterText: typeof firstChapter?.content === 'string' ? firstChapter.content : work.chapterText || '',
     chapters: normalizedChapters,
+    chapterTasks: normalizeChapterTasks(work.chapterTasks),
     materials: {
       genre: materials.genre || work.type || '待整理',
       sellingPoint: materials.sellingPoint || work.sellingPoint || '',
@@ -2100,6 +2916,7 @@ function normalizeWorkspaceChapter(chapter: Partial<WorkChapter>, index: number)
   const content = typeof chapter.content === 'string' ? chapter.content : ''
   return {
     id: chapter.id || `chapter-${index + 1}`,
+    backendChapterId: chapter.backendChapterId,
     chapterNumber: typeof chapter.chapterNumber === 'number' && chapter.chapterNumber > 0 ? chapter.chapterNumber : index + 1,
     title: chapter.title || `第 ${index + 1} 章`,
     content,
@@ -2188,6 +3005,7 @@ function EditorView({
   selectedRewriteText,
   rewriteApplyText,
   backendRewriteLoading,
+  backendRewriteStreamText,
   backendRewriteOptions,
   onChapterChange,
   onGenerateSummary,
@@ -2207,6 +3025,7 @@ function EditorView({
   selectedRewriteText: string
   rewriteApplyText: string
   backendRewriteLoading: boolean
+  backendRewriteStreamText: string
   backendRewriteOptions: RewriteVersionOption[]
   onChapterChange: (patch: Partial<WorkChapter>) => void
   onGenerateSummary: () => void
@@ -2282,6 +3101,15 @@ function EditorView({
             {backendRewriteLoading && <button onClick={onCancelBackendRewrite} className="rounded-md border border-red-200 bg-white px-3 py-2 text-sm font-semibold text-red-600 hover:bg-red-50">取消</button>}
             <button onClick={onOpenRewriteWebAi} className="rounded-md border border-blue-200 bg-white px-4 py-2 text-sm font-semibold text-blue-700 hover:bg-blue-50">Web AI</button>
           </div>
+          {(backendRewriteLoading || backendRewriteStreamText.trim()) && (
+            <div className="mt-3 rounded-md border border-emerald-100 bg-white p-3">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs font-semibold text-emerald-700">{backendRewriteLoading ? '流式生成中' : '最近一次 API 流式输出'}</span>
+                <span className="text-[11px] text-slate-400">{countTextChars(backendRewriteStreamText)} 字</span>
+              </div>
+              <pre className="mt-2 max-h-36 overflow-auto whitespace-pre-wrap break-words text-[11px] leading-5 text-slate-500">{backendRewriteStreamText || '正在等待模型返回...'}</pre>
+            </div>
+          )}
           {selectedRewriteText && (
             <div className="mt-3 border-t border-blue-100 pt-3">
               {visibleRewriteVersionOptions.length > 0 && (
@@ -2358,6 +3186,120 @@ function EditorView({
         </div>
       </div>
     </div>
+  )
+}
+
+function ChapterTaskView({
+  chapter,
+  task,
+  versions,
+  syncMessage,
+  onGenerate,
+  onChange,
+  onSave,
+  onRefresh,
+  onOpenEditor,
+  onCreateNext,
+}: {
+  chapter: WorkChapter
+  task?: ChapterTask
+  versions: BackendChapterTask[]
+  syncMessage: string
+  onGenerate: () => void
+  onChange: (patch: Partial<ChapterTask>) => void
+  onSave: () => void
+  onRefresh: () => void
+  onOpenEditor: () => void
+  onCreateNext: () => void
+}) {
+  if (!task) {
+    return (
+      <div className="flex h-full items-center justify-center p-8">
+        <div className="max-w-lg text-center">
+          <Clipboard className="mx-auto h-10 w-10 text-[#2f7f86]" />
+          <h2 className="mt-4 text-xl font-semibold">{chapter.title} 还没有任务卡</h2>
+          <p className="mt-2 text-sm leading-6 text-slate-500">从作品卖点、当前章节、下一步提示和已确认记忆生成一张可编辑草稿。生成结果不会自动写入正文。</p>
+          <div className="mt-5 flex justify-center gap-3">
+            <button onClick={onGenerate} className="rounded-md bg-[#2f7f86] px-5 py-2.5 text-sm font-semibold text-white hover:bg-[#276d73]">生成当前章任务卡</button>
+            <button onClick={onCreateNext} className="rounded-md border border-slate-200 px-5 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50">规划下一章</button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="h-full overflow-y-auto p-7">
+      <div className="flex flex-wrap items-start justify-between gap-4 border-b border-slate-200 pb-5">
+        <div>
+          <div className="text-xs font-semibold text-[#2f7f86]">CHAPTER TASK {task.versionNumber ? `V${task.versionNumber}` : 'V0'}</div>
+          <h2 className="mt-1 text-2xl font-semibold">{chapter.title} · 创作任务卡</h2>
+          <p className="mt-2 text-sm text-slate-500">先确认目标和边界，再进入正文。{syncMessage}</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <select value={task.status} onChange={(event) => onChange({ status: event.target.value as ChapterTask['status'], source: 'user' })} className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm outline-none">
+            <option value="draft">待确认</option>
+            <option value="active">进行中</option>
+            <option value="completed">已完成</option>
+          </select>
+          <button onClick={onRefresh} className="rounded-md border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50">刷新</button>
+          <button onClick={onSave} className="rounded-md bg-[#2f7f86] px-4 py-2 text-sm font-semibold text-white hover:bg-[#276d73]">保存任务卡</button>
+          <button onClick={onOpenEditor} className="rounded-md bg-slate-950 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800">进入正文</button>
+          <button onClick={onCreateNext} className="rounded-md border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">规划下一章</button>
+        </div>
+      </div>
+
+      <div className="mt-6 grid gap-5 lg:grid-cols-2">
+        <label className="text-sm font-semibold text-slate-700 lg:col-span-2">本章核心目标
+          <textarea value={task.coreGoal} onChange={(event) => onChange({ coreGoal: event.target.value, source: 'user' })} className="mt-2 min-h-24 w-full resize-y rounded-md border border-slate-200 p-3 font-normal leading-6 outline-none focus:border-[#6aa8ad]" />
+        </label>
+        <label className="text-sm font-semibold text-slate-700">情绪目标
+          <textarea value={task.emotionGoal} onChange={(event) => onChange({ emotionGoal: event.target.value, source: 'user' })} className="mt-2 min-h-24 w-full resize-y rounded-md border border-slate-200 p-3 font-normal leading-6 outline-none focus:border-[#6aa8ad]" />
+        </label>
+        <div className="grid grid-cols-2 gap-3">
+          <label className="text-sm font-semibold text-slate-700">目标字数
+            <input type="number" min={300} step={100} value={task.targetWords} onChange={(event) => onChange({ targetWords: Number(event.target.value) || 0, source: 'user' })} className="mt-2 w-full rounded-md border border-slate-200 px-3 py-2.5 font-normal outline-none focus:border-[#6aa8ad]" />
+          </label>
+          <label className="text-sm font-semibold text-slate-700">卷内节点
+            <input value={task.volumeNode} onChange={(event) => onChange({ volumeNode: event.target.value, source: 'user' })} className="mt-2 w-full rounded-md border border-slate-200 px-3 py-2.5 font-normal outline-none focus:border-[#6aa8ad]" />
+          </label>
+          <label className="col-span-2 text-sm font-semibold text-slate-700">所属故事线
+            <input value={task.storyline} onChange={(event) => onChange({ storyline: event.target.value, source: 'user' })} className="mt-2 w-full rounded-md border border-slate-200 px-3 py-2.5 font-normal outline-none focus:border-[#6aa8ad]" />
+          </label>
+        </div>
+        <TaskListField label="标题候选" value={task.titleCandidates} onChange={(titleCandidates) => onChange({ titleCandidates, source: 'user' })} />
+        <TaskListField label="本章必须完成" value={task.mustDo} onChange={(mustDo) => onChange({ mustDo, source: 'user' })} />
+        <TaskListField label="禁止事项" value={task.forbidden} onChange={(forbidden) => onChange({ forbidden, source: 'user' })} />
+        <TaskListField label="节奏步骤" value={task.rhythmSteps} onChange={(rhythmSteps) => onChange({ rhythmSteps, source: 'user' })} />
+      </div>
+      {versions.length > 0 && (
+        <section className="mt-6 border-t border-slate-200 pt-5">
+          <h3 className="font-semibold text-slate-900">任务卡版本</h3>
+          <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+            {versions.slice(0, 6).map((version) => (
+              <div key={version.id} className="rounded-md border border-slate-200 bg-white p-3 text-xs">
+                <div className="flex items-center justify-between"><span className="font-semibold">V{version.versionNumber} · {chapterTaskStatusText[version.status]}</span><span className="text-slate-400">{formatBackendTime(version.createTime)}</span></div>
+                <p className="mt-2 line-clamp-2 leading-5 text-slate-600">{version.coreGoal}</p>
+                <p className="mt-1 text-[11px] text-slate-400">来源：{version.source === 'user' ? '用户编辑' : version.source === 'model-api' ? '模型 API' : '本地生成'}</p>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+    </div>
+  )
+}
+
+function TaskListField({ label, value, onChange }: { label: string; value: string[]; onChange: (value: string[]) => void }) {
+  return (
+    <label className="text-sm font-semibold text-slate-700">{label}
+      <textarea
+        value={value.join('\n')}
+        onChange={(event) => onChange(event.target.value.split('\n').map((item) => item.trim()).filter(Boolean))}
+        className="mt-2 min-h-36 w-full resize-y rounded-md border border-slate-200 p-3 font-normal leading-6 outline-none focus:border-[#6aa8ad]"
+        placeholder="每行一项"
+      />
+    </label>
   )
 }
 
@@ -2465,6 +3407,7 @@ function LoreView({
 function MemoryView({
   entries,
   stats,
+  syncMessage,
   onGenerateSummary,
   onExtractCandidates,
   onAdd,
@@ -2476,6 +3419,7 @@ function MemoryView({
 }: {
   entries: MemoryEntry[]
   stats: Array<{ type: MemoryType; count: number }>
+  syncMessage: string
   onGenerateSummary: () => void
   onExtractCandidates: () => void
   onAdd: (type: MemoryType) => void
@@ -2495,10 +3439,11 @@ function MemoryView({
       <div className="flex items-start justify-between">
         <div>
           <h2 className="text-xl font-semibold">长篇记忆</h2>
-          <p className="mt-1 text-sm text-slate-500">Memory V0：本地维护章节摘要、人物状态、世界观事实和未回收伏笔；真实模型抽取待接入。</p>
+          <p className="mt-1 text-sm text-slate-500">Memory V0：候选、确认、拒绝、过期和来源章节可同步到后端；真实模型抽取仍待接入。</p>
+          <p className="mt-1 text-xs text-slate-400">{syncMessage}</p>
         </div>
         <div className="flex gap-2">
-          <button onClick={onSyncSummary} className="rounded-md border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">同步/保存记忆摘要</button>
+          <button onClick={onSyncSummary} className="rounded-md border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">同步全部记忆</button>
           <button onClick={onOpenWebAi} className="rounded-md border border-violet-200 px-4 py-2 text-sm font-semibold text-violet-700 hover:bg-violet-50">Web AI 记忆 Prompt</button>
           <button onClick={onExtractCandidates} className="rounded-md border border-emerald-200 px-4 py-2 text-sm font-semibold text-emerald-700 hover:bg-emerald-50">提取记忆候选</button>
           <button onClick={onGenerateSummary} className="rounded-md bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-500">生成当前章节摘要</button>
@@ -2549,6 +3494,9 @@ function MemoryView({
 function ChecksView({
   issues,
   viralSummary,
+  diagnosticRuns,
+  diagnosticLoading,
+  diagnosticSyncMessage,
   onRunCheck,
   onRunReadthroughDiagnosis,
   onRunHumanTasteRevision,
@@ -2559,10 +3507,14 @@ function ChecksView({
   onInsertSuggestion,
   onStatusChange,
   onOpenWebAi,
-  onRunBackendCheck,
+  onRefreshRuns,
+  onOpenRun,
 }: {
   issues: CheckIssue[]
   viralSummary: ViralDiagnosisSummary | null
+  diagnosticRuns: BackendDiagnosticRun[]
+  diagnosticLoading: boolean
+  diagnosticSyncMessage: string
   onRunCheck: () => void
   onRunReadthroughDiagnosis: () => void
   onRunHumanTasteRevision: () => void
@@ -2573,7 +3525,8 @@ function ChecksView({
   onInsertSuggestion: (text: string) => void
   onStatusChange: (id: string, status: CheckIssue['status']) => void
   onOpenWebAi: () => void
-  onRunBackendCheck: () => void
+  onRefreshRuns: () => void
+  onOpenRun: (run: BackendDiagnosticRun) => void
 }) {
   const counts = {
     high: issues.filter((issue) => issue.severity === 'high' && issue.status === 'open').length,
@@ -2585,12 +3538,11 @@ function ChecksView({
     <div className="h-full overflow-y-auto p-5">
       <div className="flex items-start justify-between">
         <div>
-          <h2 className="text-xl font-semibold">OOC / 伏笔检查结果</h2>
-          <p className="mt-1 text-sm text-slate-500">本地规则会优先参考已确认记忆，忽略已拒绝记忆；真实模型一致性检查仍待接入。</p>
+          <h2 className="text-xl font-semibold">证据化章节诊断</h2>
+          <p className="mt-1 text-sm text-slate-500">统一保存追读、OOC、伏笔和表达问题的原文证据、原因、建议与处理状态；真实模型一致性检查仍待接入。</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap justify-end gap-2">
           <button onClick={onOpenWebAi} className="rounded-md border border-violet-200 px-4 py-2 text-sm font-semibold text-violet-700 hover:bg-violet-50">Web AI 检查 Prompt</button>
-          <button onClick={onRunBackendCheck} className="rounded-md border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">后端分析</button>
           <button onClick={onRunViralPotentialDiagnosis} className="rounded-md border border-rose-200 px-4 py-2 text-sm font-semibold text-rose-700 hover:bg-rose-50">爆款诊断</button>
           <button onClick={onCopyViralPrompt} className="rounded-md border border-fuchsia-200 px-4 py-2 text-sm font-semibold text-fuchsia-700 hover:bg-fuchsia-50">深度诊断 Prompt</button>
           <button onClick={onRunReadthroughDiagnosis} className="rounded-md border border-amber-200 px-4 py-2 text-sm font-semibold text-amber-700 hover:bg-amber-50">追读诊断</button>
@@ -2604,6 +3556,30 @@ function ChecksView({
         <StatCard label="低风险" value={counts.low} tone="blue" />
         <StatCard label="已处理" value={counts.resolved} tone="emerald" />
       </div>
+      <section className="mt-5 rounded-md border border-slate-200 bg-white p-4">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <h3 className="font-semibold text-slate-900">诊断历史</h3>
+            <p className="mt-1 text-xs text-slate-500">{diagnosticSyncMessage}</p>
+          </div>
+          <button onClick={onRefreshRuns} disabled={diagnosticLoading} className="rounded-md border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-50 disabled:opacity-50">{diagnosticLoading ? '读取中' : '刷新'}</button>
+        </div>
+        <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+          {diagnosticRuns.slice(0, 6).map((run) => (
+            <button key={run.id} onClick={() => onOpenRun(run)} className="rounded-md border border-slate-200 bg-slate-50/60 p-3 text-left hover:border-blue-200 hover:bg-blue-50/40">
+              <div className="flex items-center justify-between gap-2">
+                <span className="truncate text-xs font-semibold text-slate-800">{run.title}</span>
+                <span className="shrink-0 rounded bg-white px-1.5 py-0.5 text-[10px] text-slate-500">{diagnosticRunTypeText(run.runType)}</span>
+              </div>
+              <div className="mt-2 flex items-center justify-between text-[11px] text-slate-500">
+                <span>{run.issueCount} 个问题 · 高风险 {run.highCount}</span>
+                <span>{formatBackendTime(run.createTime)}</span>
+              </div>
+            </button>
+          ))}
+          {!diagnosticLoading && diagnosticRuns.length === 0 && <div className="rounded-md border border-dashed border-slate-200 px-3 py-4 text-xs text-slate-400">当前章节暂无后端诊断历史。</div>}
+        </div>
+      </section>
       {viralSummary && (
         <section className="mt-5 rounded-md border border-rose-200 bg-rose-50/50 p-4">
           <div className="flex flex-wrap items-start justify-between gap-3">
@@ -2786,6 +3762,19 @@ function VersionHistoryPanel({
   onManualSync?: () => void
   onRestoreVersion?: (record: WorkVersionRecord) => void
 }) {
+  const [baseVersionId, setBaseVersionId] = useState('')
+  const [targetVersionId, setTargetVersionId] = useState('')
+  const baseRecord = records.find((record) => record.id === baseVersionId) ?? records[1] ?? records[0]
+  const targetRecord = records.find((record) => record.id === targetVersionId) ?? records[0]
+  const comparison = baseRecord && targetRecord && baseRecord.id !== targetRecord.id ? buildWorkVersionComparison(baseRecord, targetRecord) : null
+  const canCompare = Boolean(comparison)
+  const [selectedChapterKey, setSelectedChapterKey] = useState('')
+  const selectedChapterDiff = comparison?.chapterDiffs.find((diff) => diff.key === selectedChapterKey)
+    ?? comparison?.chapterDiffs.find((diff) => diff.status === 'changed')
+    ?? comparison?.chapterDiffs.find((diff) => diff.status !== 'unchanged')
+    ?? comparison?.chapterDiffs[0]
+  const selectedDiffPreview = selectedChapterDiff ? buildRewriteDiffPreview(selectedChapterDiff.oldContent, selectedChapterDiff.newContent) : null
+
   return (
     <section className="mt-5 rounded-lg border border-[#d8e5e4] bg-white/78 p-3">
       <div className="flex items-center justify-between gap-2">
@@ -2799,6 +3788,60 @@ function VersionHistoryPanel({
         <button onClick={onCreateVersion} className="rounded-md border border-slate-200 bg-white px-2 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50">留版本</button>
         <button onClick={onManualSync} className="rounded-md bg-slate-950 px-2 py-2 text-xs font-semibold text-white hover:bg-slate-800">{canSync ? '手动同步' : '本地备份'}</button>
       </div>
+      {records.length >= 2 && (
+        <div className="mt-3 rounded-md border border-slate-100 bg-white p-2">
+          <div className="flex items-center justify-between gap-2">
+            <h4 className="text-xs font-semibold text-slate-800">版本对比 V0</h4>
+            <span className="text-[11px] text-slate-400">本地快照</span>
+          </div>
+          <div className="mt-2 grid gap-2">
+            <label className="text-[11px] font-medium text-slate-500">
+              基准版本
+              <select value={baseRecord?.id || ''} onChange={(event) => setBaseVersionId(event.target.value)} className="mt-1 h-8 w-full rounded border border-slate-200 bg-white px-2 text-xs text-slate-700 outline-none">
+                {records.map((record) => <option key={record.id} value={record.id}>{record.createdAt} · {versionSourceText(record.source)}</option>)}
+              </select>
+            </label>
+            <label className="text-[11px] font-medium text-slate-500">
+              目标版本
+              <select value={targetRecord?.id || ''} onChange={(event) => setTargetVersionId(event.target.value)} className="mt-1 h-8 w-full rounded border border-slate-200 bg-white px-2 text-xs text-slate-700 outline-none">
+                {records.map((record) => <option key={record.id} value={record.id}>{record.createdAt} · {versionSourceText(record.source)}</option>)}
+              </select>
+            </label>
+          </div>
+          {!canCompare && <p className="mt-2 rounded border border-dashed border-slate-200 px-2 py-2 text-[11px] leading-5 text-slate-400">请选择两个不同版本进行对比。</p>}
+          {comparison && (
+            <div className="mt-3 space-y-2">
+              <div className="grid grid-cols-3 gap-2 text-[11px]">
+                <div className="rounded bg-slate-50 px-2 py-1.5 text-slate-600">字数 {signedNumber(comparison.wordDelta)}</div>
+                <div className="rounded bg-slate-50 px-2 py-1.5 text-slate-600">章节 {signedNumber(comparison.chapterDelta)}</div>
+                <div className="rounded bg-slate-50 px-2 py-1.5 text-slate-600">变更 {comparison.changedCount}</div>
+              </div>
+              <div className="grid grid-cols-3 gap-2 text-[11px]">
+                <div className="rounded bg-emerald-50 px-2 py-1.5 text-emerald-700">新增 {comparison.addedCount}</div>
+                <div className="rounded bg-rose-50 px-2 py-1.5 text-rose-700">删除 {comparison.removedCount}</div>
+                <div className="rounded bg-slate-50 px-2 py-1.5 text-slate-500">未变 {comparison.unchangedCount}</div>
+              </div>
+              <select value={selectedChapterDiff?.key || ''} onChange={(event) => setSelectedChapterKey(event.target.value)} className="h-8 w-full rounded border border-slate-200 bg-white px-2 text-xs text-slate-700 outline-none">
+                {comparison.chapterDiffs.map((diff) => (
+                  <option key={diff.key} value={diff.key}>{versionChapterStatusText(diff.status)} · {diff.title} · {signedNumber(diff.newWords - diff.oldWords)} 字</option>
+                ))}
+              </select>
+              {selectedChapterDiff && selectedDiffPreview && (
+                <div className="rounded-md border border-slate-100 bg-[#f8fbfa] p-2">
+                  <div className="flex items-center justify-between gap-2 text-[11px]">
+                    <span className="font-semibold text-slate-700">{selectedChapterDiff.title}</span>
+                    <span className="text-slate-400">{selectedChapterDiff.oldWords} → {selectedChapterDiff.newWords} 字</span>
+                  </div>
+                  <div className="mt-2 max-h-36 overflow-auto rounded bg-white px-2 py-2 text-[11px] leading-5 text-slate-500">
+                    {selectedDiffPreview.segments.length === 0 ? '两个版本的章节正文都为空。' : selectedDiffPreview.segments.map((segment, index) => renderDiffSegment(segment, index))}
+                    {selectedDiffPreview.truncated && <div className="mt-2 text-[11px] text-amber-600">内容较长，当前仅展示前 900 个 diff token。</div>}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
       <div className="mt-3 space-y-2">
         {records.slice(0, 4).map((record) => (
           <article key={record.id} className="rounded-md border border-slate-100 bg-[#f8fbfa] p-2">
@@ -2817,19 +3860,339 @@ function VersionHistoryPanel({
   )
 }
 
+function BackendChapterVersionPanel({
+  versions,
+  loading,
+  canLoad,
+  onRefresh,
+  onRestore,
+}: {
+  versions: BackendChapterVersion[]
+  loading: boolean
+  canLoad: boolean
+  onRefresh: () => void
+  onRestore: (version: BackendChapterVersion) => void
+}) {
+  return (
+    <section className="mt-4 rounded-lg border border-[#d8e5e4] bg-white/78 p-3">
+      <div className="flex items-center justify-between gap-2">
+        <h3 className="flex items-center gap-2 text-sm font-semibold text-slate-900"><FileText className="h-4 w-4 text-[#2f7f86]" />当前章节版本</h3>
+        <button onClick={onRefresh} disabled={!canLoad || loading} className="rounded border border-slate-200 bg-white px-2 py-1 text-[11px] font-semibold text-slate-600 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50">
+          {loading ? '读取中' : '刷新'}
+        </button>
+      </div>
+      <p className="mt-2 text-xs leading-5 text-slate-500">独立记录当前章节的手动保存、AI 采用和恢复历史。恢复前会自动备份现有正文。</p>
+      {!canLoad && <div className="mt-3 rounded-md border border-dashed border-slate-200 p-3 text-center text-xs leading-5 text-slate-500">登录并同步正式作品后，可使用章节独立版本。</div>}
+      {canLoad && versions.length === 0 && !loading && <div className="mt-3 rounded-md border border-dashed border-slate-200 p-3 text-center text-xs text-slate-500">当前章节还没有云端版本。保存作品或点击“留版本”后会出现在这里。</div>}
+      {canLoad && versions.length > 0 && (
+        <div className="mt-3 space-y-2">
+          {versions.slice(0, 6).map((version) => (
+            <article key={version.id} className="rounded-md border border-slate-100 bg-[#f8fbfa] p-2">
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-1.5 text-xs font-semibold text-slate-800">
+                    <span>V{version.versionNumber}</span>
+                    <span className="rounded bg-white px-1.5 py-0.5 text-[10px] font-medium text-[#0f766e]">{chapterVersionSourceText(version.source)}</span>
+                  </div>
+                  <div className="mt-1 text-[11px] text-slate-400">{version.wordCount ?? countTextChars(version.content || '')} 字 · {formatBackendLogTime(version.createdAt)}</div>
+                </div>
+                <button onClick={() => onRestore(version)} disabled={loading} className="shrink-0 rounded border border-[#d8e5e4] bg-white px-2 py-1 text-[11px] font-semibold text-[#0f766e] hover:bg-[#e7f3ef] disabled:opacity-50">恢复</button>
+              </div>
+              {version.changeSummary && <p className="mt-2 text-[11px] leading-5 text-slate-600">{version.changeSummary}</p>}
+              {version.content && <p className="mt-1 line-clamp-2 text-[11px] leading-5 text-slate-400">{version.content}</p>}
+            </article>
+          ))}
+        </div>
+      )}
+    </section>
+  )
+}
+
+function chapterVersionSourceText(source?: BackendChapterVersion['source']) {
+  const labels: Record<NonNullable<BackendChapterVersion['source']>, string> = {
+    'manual-save': '保存',
+    'manual-snapshot': '手动留版',
+    'ai-adopt': 'AI 采用',
+    'restore-backup': '恢复前备份',
+    restore: '恢复结果',
+  }
+  return source ? labels[source] : '章节版本'
+}
+
+function normalizeChapterTasks(tasks: ChapterTask[] | undefined): ChapterTask[] {
+  if (!Array.isArray(tasks)) return []
+  return tasks.filter((task) => task?.id && task?.chapterId).map((task) => ({
+    ...task,
+    status: task.status === 'active' || task.status === 'completed' ? task.status : 'draft',
+    titleCandidates: Array.isArray(task.titleCandidates) ? task.titleCandidates : [],
+    coreGoal: task.coreGoal || '',
+    emotionGoal: task.emotionGoal || '',
+    targetWords: safeNumber(task.targetWords) || 2500,
+    storyline: task.storyline || '',
+    volumeNode: task.volumeNode || '',
+    mustDo: Array.isArray(task.mustDo) ? task.mustDo : [],
+    forbidden: Array.isArray(task.forbidden) ? task.forbidden : [],
+    rhythmSteps: Array.isArray(task.rhythmSteps) ? task.rhythmSteps : [],
+    source: task.source === 'user' || task.source === 'model-api' ? task.source : 'local',
+    sourceBasis: Array.isArray(task.sourceBasis) ? task.sourceBasis : [],
+    createdAt: task.createdAt || '刚刚',
+    updatedAt: task.updatedAt || '刚刚',
+  }))
+}
+
+function buildLocalChapterTask(work: SavedWork, sourceChapter: WorkChapter, targetChapter: WorkChapter, memoryEntries: MemoryEntry[]): ChapterTask {
+  const confirmed = memoryEntries.map(normalizeMemoryEntry).filter((entry) => entry.status === 'confirmed')
+  const openForeshadow = confirmed.find((entry) => entry.type === 'open-foreshadow')
+  const characterState = confirmed.find((entry) => entry.type === 'character-state')
+  const sourceEnding = sourceChapter.content.trim().slice(-180)
+  const nextStep = work.materials.nextStep || work.coreConflict || work.sellingPoint || '推进主角当前目标，并让局势产生不可逆变化。'
+  const titleBase = targetChapter.title || `第 ${targetChapter.chapterNumber} 章`
+  return {
+    id: `chapter-task-${Date.now()}-${targetChapter.id}`,
+    chapterId: targetChapter.id,
+    status: 'draft',
+    titleCandidates: [titleBase, `${titleBase}：局势升级`, `${titleBase}：代价浮现`],
+    coreGoal: nextStep,
+    emotionGoal: '让读者先感到压力升级，再获得一次信息、关系或行动上的阶段性回报。',
+    targetWords: 2500,
+    storyline: work.globalOutline?.[Math.max(0, targetChapter.chapterNumber - 1)] || work.coreConflict || work.materials.summary || '主线推进',
+    volumeNode: `第 ${targetChapter.chapterNumber} 章 · 推进节点`,
+    mustDo: [
+      openForeshadow ? `承接伏笔：${openForeshadow.title}` : `承接上一章结尾：${sourceEnding || nextStep}`,
+      characterState ? `保持人物状态连续：${characterState.title}` : '让主角做出一个明确选择或行动',
+      '章内至少完成一次信息、关系或行动上的小兑现',
+      '章末留下具体的新问题、代价或选择',
+    ],
+    forbidden: [
+      '不要用大段说明代替现场行动',
+      '不要无铺垫改变人物动机或新增关键设定',
+      '不要让本章结束后局势回到原点',
+    ],
+    rhythmSteps: ['承接上一章余波', '抛出本章目标与阻力', '升级冲突或误判', '兑现一个阶段结果', '留下下一章钩子'],
+    source: 'local',
+    sourceBasis: [
+      `作品主线：${work.coreConflict || work.materials.summary || '未设置'}`,
+      `上一章结尾：${sourceEnding || '暂无正文'}`,
+      ...confirmed.slice(0, 5).map((entry) => `已确认记忆：${entry.title}`),
+    ],
+    createdAt: '刚刚',
+    updatedAt: '刚刚',
+  }
+}
+
+function buildWorkVersionComparison(baseRecord: WorkVersionRecord, targetRecord: WorkVersionRecord): WorkVersionComparison {
+  const baseChapters = normalizeWorkspaceChapters(baseRecord.snapshot)
+  const targetChapters = normalizeWorkspaceChapters(targetRecord.snapshot)
+  const baseByKey = new Map(baseChapters.map((chapter) => [versionChapterKey(chapter), chapter]))
+  const targetByKey = new Map(targetChapters.map((chapter) => [versionChapterKey(chapter), chapter]))
+  const keys = Array.from(new Set([...Array.from(baseByKey.keys()), ...Array.from(targetByKey.keys())]))
+  const chapterDiffs = keys.map((key): VersionChapterDiff => {
+    const baseChapter = baseByKey.get(key)
+    const targetChapter = targetByKey.get(key)
+    const oldContent = baseChapter?.content || ''
+    const newContent = targetChapter?.content || ''
+    const status: VersionChapterDiffStatus = !baseChapter
+      ? 'added'
+      : !targetChapter
+        ? 'removed'
+        : oldContent !== newContent || baseChapter.title !== targetChapter.title || baseChapter.status !== targetChapter.status
+          ? 'changed'
+          : 'unchanged'
+    return {
+      key,
+      status,
+      title: targetChapter?.title || baseChapter?.title || '未命名章节',
+      oldContent,
+      newContent,
+      oldWords: countTextChars(oldContent),
+      newWords: countTextChars(newContent),
+    }
+  })
+
+  return {
+    wordDelta: targetRecord.wordCount - baseRecord.wordCount,
+    chapterDelta: targetRecord.chapterCount - baseRecord.chapterCount,
+    addedCount: chapterDiffs.filter((diff) => diff.status === 'added').length,
+    removedCount: chapterDiffs.filter((diff) => diff.status === 'removed').length,
+    changedCount: chapterDiffs.filter((diff) => diff.status === 'changed').length,
+    unchangedCount: chapterDiffs.filter((diff) => diff.status === 'unchanged').length,
+    chapterDiffs,
+  }
+}
+
+function versionChapterKey(chapter: WorkChapter) {
+  return chapter.backendChapterId || chapter.id || `chapter-${chapter.chapterNumber}`
+}
+
+function versionSourceText(source: WorkVersionRecord['source']) {
+  const labels: Record<WorkVersionRecord['source'], string> = {
+    'manual-save': '手动保存',
+    'manual-snapshot': '手动快照',
+    'restore-copy': '恢复副本',
+  }
+  return labels[source]
+}
+
+function versionChapterStatusText(status: VersionChapterDiffStatus) {
+  const labels: Record<VersionChapterDiffStatus, string> = {
+    added: '新增',
+    removed: '删除',
+    changed: '变更',
+    unchanged: '未变',
+  }
+  return labels[status]
+}
+
+function signedNumber(value: number) {
+  if (value > 0) return `+${value.toLocaleString()}`
+  return value.toLocaleString()
+}
+
+function renderDiffSegment(segment: RewriteDiffSegment, index: number) {
+  return (
+    <span
+      key={`${segment.type}-${index}`}
+      className={cn(
+        'whitespace-pre-wrap rounded-sm px-0.5',
+        segment.type === 'added' && 'bg-emerald-100 text-emerald-800',
+        segment.type === 'removed' && 'bg-rose-100 text-rose-700 line-through',
+      )}
+    >
+      {segment.text}
+    </span>
+  )
+}
+
+function buildBackendRewriteCostStats(logs: BackendRewriteLog[], total: number, totalTokens: number, unitPriceInput = ''): BackendRewriteCostStats {
+  const visibleTokens = logs.reduce((sum, log) => sum + (log.tokenUsage || 0), 0)
+  const maxTokens = logs.reduce((max, log) => Math.max(max, log.tokenUsage || 0), 0)
+  const averageTokens = total > 0 ? Math.round(totalTokens / total) : logs.length > 0 ? Math.round(visibleTokens / logs.length) : 0
+  const unitPrice = Math.max(0, Number.parseFloat(unitPriceInput) || 0)
+  return {
+    visibleTokens,
+    averageTokens,
+    maxTokens,
+    chartLogs: logs.slice(0, 8),
+    unitPrice,
+    visibleCost: calculateRewriteCost(visibleTokens, unitPrice),
+    totalCost: calculateRewriteCost(totalTokens || visibleTokens, unitPrice),
+  }
+}
+
+function calculateRewriteCost(tokens: number, unitPrice: number) {
+  return tokens > 0 && unitPrice > 0 ? (tokens / 1000) * unitPrice : 0
+}
+
+function formatRewriteCost(value: number) {
+  if (!Number.isFinite(value) || value <= 0) return '待输入单价'
+  return `¥${value.toFixed(value >= 1 ? 2 : 4)}`
+}
+
+function buildBackendRewriteRiskStats(logs: BackendRewriteLog[]): BackendRewriteRiskStats {
+  const noteCounts = new Map<string, number>()
+  const errorCodeCounts = new Map<string, number>()
+  let failedCount = 0
+  let rawResponseCount = 0
+  let emptyResponseCount = 0
+
+  logs.forEach((log) => {
+    const raw = (log.responseSnapshot || '').trim()
+    if (!raw) {
+      emptyResponseCount += 1
+      return
+    }
+    const parsed = parseBackendRewriteLogResult(raw)
+    if (isBackendRewriteFailureLog(log, parsed)) {
+      failedCount += 1
+      const errorCode = normalizeRewriteErrorCode(parsed.errorCode || parsed.errorType || 'MODEL_CALL_FAILED')
+      errorCodeCounts.set(errorCode, (errorCodeCounts.get(errorCode) || 0) + 1)
+    }
+    if (parsed.mode === 'model-api-raw') rawResponseCount += 1
+    ;(parsed.riskNotes || []).forEach((note) => {
+      const label = normalizeRewriteRiskNote(note)
+      noteCounts.set(label, (noteCounts.get(label) || 0) + 1)
+    })
+  })
+
+  return {
+    total: failedCount + rawResponseCount + emptyResponseCount + Array.from(noteCounts.values()).reduce((sum, count) => sum + count, 0),
+    failedCount,
+    rawResponseCount,
+    emptyResponseCount,
+    noteCounts: Array.from(noteCounts.entries())
+      .map(([label, count]) => ({ label, count }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 4),
+    errorCodeCounts: Array.from(errorCodeCounts.entries())
+      .map(([label, count]) => ({ label, count }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 4),
+  }
+}
+
+function isBackendRewriteFailureLog(log: BackendRewriteLog, parsed?: BackendRewriteResult) {
+  const mode = parsed?.mode || ''
+  return mode.includes('error') || (log.modelName || '').includes('error')
+}
+
+function normalizeRewriteRiskNote(note: string) {
+  const compact = note.trim()
+  if (!compact) return '未分类风险'
+  if (compact.includes('调用失败')) return '模型调用失败'
+  if (compact.includes('标准 JSON')) return '非标准 JSON'
+  if (compact.includes('人工检查')) return '需要人工检查'
+  if (compact.includes('设定')) return '设定风险'
+  if (compact.includes('人物') || compact.includes('动机')) return '人物动机风险'
+  if (compact.includes('伏笔')) return '伏笔风险'
+  return compact.length > 18 ? `${compact.slice(0, 18)}...` : compact
+}
+
+function normalizeRewriteErrorCode(code: string) {
+  const labels: Record<string, string> = {
+    MODEL_TIMEOUT: '模型超时',
+    MODEL_RATE_LIMIT: '模型限流',
+    MODEL_AUTH_FAILED: '鉴权失败',
+    MODEL_CONFIG_MISSING: '模型配置缺失',
+    MODEL_NETWORK_ERROR: '网络错误',
+    MODEL_RESPONSE_PARSE_ERROR: '响应解析失败',
+    MODEL_CALL_FAILED: '模型调用失败',
+  }
+  return labels[code] || code
+}
+
 function BackendRewriteLogPanel({
   logs,
   loading,
   canLoad,
+  scope,
+  currentChapterHasBackendId,
+  total,
+  totalTokens,
+  latestTime,
   onRefresh,
+  onScopeChange,
+  onLoadMore,
   onAdopt,
+  onDelete,
 }: {
   logs: BackendRewriteLog[]
   loading: boolean
   canLoad: boolean
+  scope: BackendRewriteLogScope
+  currentChapterHasBackendId: boolean
+  total: number
+  totalTokens: number
+  latestTime: string
   onRefresh: () => void
+  onScopeChange: (scope: BackendRewriteLogScope) => void
+  onLoadMore: () => void
   onAdopt: (log: BackendRewriteLog) => void
+  onDelete: (log: BackendRewriteLog) => void
 }) {
+  const hasMore = canLoad && logs.length < total
+  const [costUnitPrice, setCostUnitPrice] = useState('')
+  const costStats = useMemo(() => buildBackendRewriteCostStats(logs, total, totalTokens, costUnitPrice), [costUnitPrice, logs, total, totalTokens])
+  const riskStats = useMemo(() => buildBackendRewriteRiskStats(logs), [logs])
   return (
     <section className="mt-5 rounded-lg border border-emerald-100 bg-white/78 p-3">
       <div className="flex items-center justify-between gap-2">
@@ -2839,24 +4202,118 @@ function BackendRewriteLogPanel({
         </button>
       </div>
       <p className="mt-2 text-xs leading-5 text-slate-500">读取后端 `chapter_rewrite` 日志；再次采用只会填入采用文本，不覆盖正文。</p>
+      {canLoad && (
+        <div className="mt-3 space-y-2">
+          <div className="grid grid-cols-3 gap-2 text-[11px]">
+            <div className="rounded-md bg-emerald-50 px-2 py-1.5 text-emerald-800">记录 {total}</div>
+            <div className="rounded-md bg-slate-50 px-2 py-1.5 text-slate-600">估算 {totalTokens} token</div>
+            <div className="rounded-md bg-slate-50 px-2 py-1.5 text-slate-600">{latestTime ? formatBackendLogTime(latestTime) : '暂无最新记录'}</div>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <button onClick={() => onScopeChange('all')} className={cn('rounded-md border px-2 py-1.5 text-[11px] font-semibold', scope === 'all' ? 'border-emerald-300 bg-emerald-50 text-emerald-700' : 'border-slate-200 bg-white text-slate-500 hover:bg-slate-50')}>全部记录</button>
+            <button onClick={() => onScopeChange('current')} disabled={!currentChapterHasBackendId} className={cn('rounded-md border px-2 py-1.5 text-[11px] font-semibold disabled:cursor-not-allowed disabled:opacity-50', scope === 'current' ? 'border-emerald-300 bg-emerald-50 text-emerald-700' : 'border-slate-200 bg-white text-slate-500 hover:bg-slate-50')}>当前章节</button>
+          </div>
+          {logs.length > 0 && (
+            <div className="rounded-md border border-emerald-100 bg-white p-2">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs font-semibold text-slate-800">费用换算 V0</span>
+                <span className="text-[11px] text-slate-400">按 tokenUsage × 手动单价</span>
+              </div>
+              <label className="mt-2 block text-[11px] font-medium text-slate-500">
+                每 1K token 单价（元）
+                <input
+                  value={costUnitPrice}
+                  onChange={(event) => setCostUnitPrice(event.target.value)}
+                  inputMode="decimal"
+                  placeholder="例如 0.002"
+                  className="mt-1 h-8 w-full rounded-md border border-slate-200 px-2 text-[11px] outline-none ring-emerald-500/15 focus:ring-4"
+                />
+              </label>
+              <div className="mt-2 grid grid-cols-2 gap-2 text-[11px]">
+                <div className="rounded bg-emerald-50 px-2 py-1.5 text-emerald-700">已加载 {costStats.visibleTokens.toLocaleString()}</div>
+                <div className="rounded bg-slate-50 px-2 py-1.5 text-slate-600">均值 {costStats.averageTokens.toLocaleString()}</div>
+                <div className="rounded bg-slate-50 px-2 py-1.5 text-slate-600">峰值 {costStats.maxTokens.toLocaleString()}</div>
+                <div className="rounded bg-slate-50 px-2 py-1.5 text-slate-600">覆盖 {logs.length}/{total || logs.length} 条</div>
+                <div className="rounded bg-emerald-50 px-2 py-1.5 text-emerald-700">已加载费用 {formatRewriteCost(costStats.visibleCost)}</div>
+                <div className="rounded bg-slate-50 px-2 py-1.5 text-slate-600">总量费用 {formatRewriteCost(costStats.totalCost)}</div>
+              </div>
+              <div className="mt-2 space-y-1.5">
+                {costStats.chartLogs.map((log) => {
+                  const tokens = log.tokenUsage || 0
+                  const width = costStats.maxTokens > 0 ? Math.max(4, Math.round((tokens / costStats.maxTokens) * 100)) : 4
+                  return (
+                    <div key={`cost-${log.id}`} className="grid grid-cols-[68px_minmax(0,1fr)_52px] items-center gap-2 text-[10px] text-slate-500">
+                      <span className="truncate">{formatBackendLogTime(log.createTime)}</span>
+                      <div className="h-2 overflow-hidden rounded-full bg-slate-100">
+                        <div className="h-full rounded-full bg-emerald-400" style={{ width: `${width}%` }} />
+                      </div>
+                      <span className="text-right">{tokens.toLocaleString()}</span>
+                    </div>
+                  )
+                })}
+              </div>
+              <p className="mt-2 text-[11px] leading-5 text-slate-400">同步 API 会优先写入供应商返回的 usage；流式和无 usage 响应会回退为估算 token。费用按你填的供应商单价换算，不代表最终账单。</p>
+            </div>
+          )}
+          {logs.length > 0 && (
+            <div className="rounded-md border border-amber-100 bg-white p-2">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs font-semibold text-slate-800">失败原因统计 V0</span>
+                <span className="text-[11px] text-slate-400">基于已加载日志</span>
+              </div>
+              <div className="mt-2 grid grid-cols-3 gap-2 text-[11px]">
+                <div className="rounded bg-amber-50 px-2 py-1.5 text-amber-700">风险 {riskStats.total}</div>
+                <div className="rounded bg-rose-50 px-2 py-1.5 text-rose-700">失败 {riskStats.failedCount}</div>
+                <div className="rounded bg-slate-50 px-2 py-1.5 text-slate-600">非 JSON {riskStats.rawResponseCount}</div>
+              </div>
+              <div className="mt-2 space-y-1.5">
+                {riskStats.errorCodeCounts.map((item) => (
+                  <div key={`error-${item.label}`} className="flex items-center justify-between gap-2 rounded bg-rose-50 px-2 py-1.5 text-[11px]">
+                    <span className="truncate text-rose-800">{item.label}</span>
+                    <span className="font-semibold text-rose-700">{item.count}</span>
+                  </div>
+                ))}
+                {riskStats.noteCounts.length === 0 && riskStats.errorCodeCounts.length === 0 ? (
+                  <p className="rounded border border-dashed border-slate-200 px-2 py-2 text-[11px] leading-5 text-slate-400">已加载日志里暂无模型风险提示；新的 API 调用失败会写入失败日志。</p>
+                ) : riskStats.noteCounts.map((item) => (
+                  <div key={item.label} className="flex items-center justify-between gap-2 rounded bg-amber-50/70 px-2 py-1.5 text-[11px]">
+                    <span className="truncate text-amber-800">{item.label}</span>
+                    <span className="font-semibold text-amber-700">{item.count}</span>
+                  </div>
+                ))}
+              </div>
+              <p className="mt-2 text-[11px] leading-5 text-slate-400">当前复用历史日志记录失败，后续可扩表补充标准状态码、供应商错误码和耗时。</p>
+            </div>
+          )}
+        </div>
+      )}
       <div className="mt-3 space-y-2">
         {!canLoad && <div className="rounded-md border border-dashed border-amber-200 bg-amber-50 px-3 py-3 text-xs leading-5 text-amber-700">登录并同步正式作品后，可查看后端 API 改稿历史。</div>}
-        {canLoad && logs.slice(0, 5).map((log) => {
+        {canLoad && logs.map((log) => {
           const parsed = parseBackendRewriteLogResult(log.responseSnapshot || '')
           const preview = parsed.replacementText || parsed.conservativeText || log.responseSnapshot || ''
+          const failed = isBackendRewriteFailureLog(log, parsed)
+          const errorLabel = failed ? normalizeRewriteErrorCode(parsed.errorCode || parsed.errorType || 'MODEL_CALL_FAILED') : ''
           return (
-            <article key={log.id} className="rounded-md border border-emerald-100 bg-[#f8fbfa] p-2">
+            <article key={log.id} className={cn('rounded-md border bg-[#f8fbfa] p-2', failed ? 'border-rose-100' : 'border-emerald-100')}>
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
-                  <div className="truncate text-xs font-semibold text-slate-800">{formatBackendLogTime(log.createTime)}</div>
-                  <div className="mt-0.5 text-[11px] text-slate-500">{log.modelName || 'model-api'} · {log.tokenUsage || 0} token 估算</div>
+                  <div className="flex items-center gap-1.5">
+                    <div className="truncate text-xs font-semibold text-slate-800">{formatBackendLogTime(log.createTime)}</div>
+                    {failed && <span className="rounded bg-rose-50 px-1.5 py-0.5 text-[10px] font-semibold text-rose-600">失败</span>}
+                  </div>
+                  <div className="mt-0.5 text-[11px] text-slate-500">{log.modelName || 'model-api'} · {log.tokenUsage || 0} token 估算{errorLabel ? ` · ${errorLabel}` : ''}</div>
                 </div>
-                <button onClick={() => onAdopt(log)} className="shrink-0 rounded border border-emerald-200 bg-white px-2 py-1 text-[11px] font-semibold text-emerald-700 hover:bg-emerald-50">再次采用</button>
+                <div className="flex shrink-0 items-center gap-1">
+                  <button onClick={() => onAdopt(log)} className="rounded border border-emerald-200 bg-white px-2 py-1 text-[11px] font-semibold text-emerald-700 hover:bg-emerald-50">再次采用</button>
+                  <button onClick={() => onDelete(log)} className="rounded border border-red-100 bg-white p-1 text-red-500 hover:bg-red-50" title="删除历史"><Trash2 className="h-3.5 w-3.5" /></button>
+                </div>
               </div>
               <p className="mt-2 line-clamp-2 text-[11px] leading-5 text-slate-500">{preview || '暂无响应快照'}</p>
             </article>
           )
         })}
+        {hasMore && <button onClick={onLoadMore} disabled={loading} className="w-full rounded-md border border-dashed border-emerald-200 bg-white px-3 py-2 text-xs font-semibold text-emerald-700 hover:bg-emerald-50 disabled:opacity-50">加载更多</button>}
         {canLoad && !loading && logs.length === 0 && <div className="rounded-md border border-dashed border-slate-200 px-3 py-3 text-center text-xs text-slate-400">暂无 API 改稿历史。</div>}
       </div>
     </section>
@@ -3377,6 +4834,164 @@ function loreFromBackend(lore: BackendLore): LoreEntry {
     relatedChapterIds: [],
     updatedAt: formatBackendTime(lore.updateTime || lore.createTime),
   }
+}
+
+async function saveMemoryToBackend(entry: MemoryEntry, novelId: string, token: string, chapters: WorkChapter[]): Promise<MemoryEntry> {
+  const isUpdate = isUuid(entry.id)
+  const sourceChapter = chapters.find((chapter) => chapter.id === entry.sourceChapterId || chapter.backendChapterId === entry.sourceChapterId)
+  const response = await fetch(`${backendApiBase}/api/memories${isUpdate ? `/${encodeURIComponent(entry.id)}` : ''}`, {
+    method: isUpdate ? 'PUT' : 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      novelId,
+      sourceChapterId: sourceChapter?.backendChapterId || null,
+      memoryType: entry.type,
+      title: entry.title,
+      content: entry.content,
+      status: entry.status || 'draft',
+      confidence: entry.confidence ?? 1,
+      sourceText: entry.sourceText || '',
+      createdBy: entry.createdBy || 'user',
+    }),
+  })
+  const result = await response.json() as BackendResult<BackendMemoryEntry | null>
+  if (!response.ok || result.code !== 200 || !result.data?.id) throw new Error(result.message || '保存记忆失败')
+  return memoryFromBackend(result.data, chapters)
+}
+
+function memoryFromBackend(entry: BackendMemoryEntry, chapters: WorkChapter[]): MemoryEntry {
+  const sourceChapter = chapters.find((chapter) => chapter.backendChapterId === entry.sourceChapterId)
+  return normalizeMemoryEntry({
+    id: entry.id,
+    type: entry.memoryType,
+    title: entry.title,
+    content: entry.content,
+    sourceChapterId: sourceChapter?.id || entry.sourceChapterId || '',
+    status: entry.status,
+    confidence: entry.confidence,
+    sourceText: entry.sourceText || '',
+    createdBy: entry.createdBy === 'model-api' ? 'local' : entry.createdBy || 'user',
+    createdAt: formatBackendTime(entry.createTime),
+    updatedAt: formatBackendTime(entry.updateTime || entry.createTime),
+  })
+}
+
+function diagnosticIssueToBackend(issue: CheckIssue) {
+  return {
+    issueType: issue.issueType,
+    severity: issue.severity,
+    status: issue.status,
+    position: issue.position,
+    title: issue.title || issueTypeLabels[issue.issueType],
+    description: issue.description,
+    evidence: issue.evidence || issue.excerpt || '',
+    reason: issue.reason || '',
+    suggestion: issue.suggestionText || issue.suggestion,
+    dimension: issue.dimension || '',
+    priority: issue.priority,
+    confidence: issue.confidence ?? 1,
+    source: issue.source || 'local-rules',
+  }
+}
+
+function diagnosticIssueFromBackend(issue: BackendDiagnosticIssue): CheckIssue {
+  return {
+    id: issue.id,
+    runId: issue.runId,
+    issueType: issue.issueType,
+    severity: issue.severity,
+    status: issue.issueStatus,
+    position: issue.positionText || '当前章节',
+    title: issue.title || issueTypeLabels[issue.issueType],
+    description: issue.description,
+    evidence: issue.evidence || '',
+    excerpt: issue.evidence || '',
+    reason: issue.reason || '',
+    suggestion: issue.suggestion,
+    suggestionText: issue.suggestion,
+    dimension: issue.dimension || '',
+    priority: issue.priority,
+    confidence: issue.confidence ?? 1,
+    source: issue.source || 'backend-diagnostic',
+    createdAt: issue.createTime,
+    updatedAt: issue.updateTime,
+  }
+}
+
+function diagnosticRunTypeText(type: DiagnosticRunType) {
+  const labels: Record<DiagnosticRunType, string> = {
+    consistency: '一致性',
+    readthrough: '追读',
+    'human-taste': '人味',
+    'viral-potential': '爆款潜力',
+    'web-ai': 'Web AI',
+    'model-api': '模型 API',
+  }
+  return labels[type]
+}
+
+function chapterTaskToBackend(task: ChapterTask, novelId: string, chapterId: string) {
+  return {
+    novelId,
+    chapterId,
+    status: task.status,
+    titleCandidates: task.titleCandidates,
+    coreGoal: task.coreGoal,
+    emotionGoal: task.emotionGoal,
+    targetWords: task.targetWords,
+    storyline: task.storyline,
+    volumeNode: task.volumeNode,
+    mustDo: task.mustDo,
+    forbidden: task.forbidden,
+    rhythmSteps: task.rhythmSteps,
+    source: task.source,
+    sourceBasis: task.sourceBasis || [],
+  }
+}
+
+function chapterTaskFromBackend(task: BackendChapterTask, frontendChapterId: string, existing?: ChapterTask): ChapterTask {
+  return normalizeChapterTasks([{
+    id: existing?.id || `chapter-task-${task.id}`,
+    backendTaskId: task.id,
+    chapterId: frontendChapterId,
+    versionNumber: task.versionNumber,
+    parentTaskId: task.parentTaskId,
+    status: task.status,
+    titleCandidates: task.titleCandidates || [],
+    coreGoal: task.coreGoal || '',
+    emotionGoal: task.emotionGoal || '',
+    targetWords: task.targetWords || 2500,
+    storyline: task.storyline || '',
+    volumeNode: task.volumeNode || '',
+    mustDo: task.mustDo || [],
+    forbidden: task.forbidden || [],
+    rhythmSteps: task.rhythmSteps || [],
+    source: task.source || 'user',
+    sourceBasis: task.sourceBasis || [],
+    createdAt: formatBackendTime(task.createTime),
+    updatedAt: formatBackendTime(task.updateTime || task.createTime),
+  }])[0]
+}
+
+function findWorkflowStagePath(from: WorkflowStage, target: WorkflowStage): WorkflowStage[] | null {
+  if (from === target) return []
+  const queue: Array<{ stage: WorkflowStage; path: WorkflowStage[] }> = [{ stage: from, path: [] }]
+  const visited = new Set<WorkflowStage>([from])
+  while (queue.length > 0) {
+    const current = queue.shift()
+    if (!current) break
+    for (const next of workflowStageTransitions[current.stage]) {
+      if (visited.has(next)) continue
+      const path = [...current.path, next]
+      if (next === target) return path
+      visited.add(next)
+      queue.push({ stage: next, path })
+    }
+  }
+  return null
 }
 
 function loreTypeToBackendCategory(type: LoreType) {
@@ -4131,13 +5746,14 @@ function buildViralIssueRewritePrompt(work: SavedWork, chapter: WorkChapter, iss
   return `你是中文网文编辑。请只针对下面这个问题给出改写方案，不要输出真实爆款概率，不要承诺平台推荐。\n\n【作品】${work.title || '未命名作品'}\n【章节】${chapter.title || '未命名章节'}\n【问题维度】${issue.dimension || '爆款潜力诊断'}\n【问题标题】${issue.title || issue.description}\n【问题说明】${issue.description}\n【证据】${issue.evidence || issue.excerpt || '暂无'}\n【原因】${issue.reason || '请从网文追读和商业化角度分析。'}\n\n请输出：\n1. 保守改：尽量不改变剧情，只增强表达。\n2. 强刺激改：增强冲突、代价、反差或情绪压力。\n3. 网文钩子增强版：更强开篇/章末钩子或爽点表达。\n4. 可直接替换或插入的文本片段。\n\n【当前章节正文】\n${chapter.content || work.chapterText || '暂无正文'}`
 }
 
-function buildWorkspacePrompt(target: WebAiTarget, work: SavedWork, chapter: WorkChapter, loreEntries: LoreEntry[], memoryEntries: MemoryEntry[], rewriteInstruction = '', selectedRewriteText = '') {
+function buildWorkspacePrompt(target: WebAiTarget, work: SavedWork, chapter: WorkChapter, loreEntries: LoreEntry[], memoryEntries: MemoryEntry[], rewriteInstruction = '', selectedRewriteText = '', chapterTask?: ChapterTask) {
   const loreText = loreEntries.map((entry) => `- [${loreTypeLabels[entry.type]}] ${entry.title}: ${entry.content}`).join('\n')
   const memoryText = memoryEntries
     .map(normalizeMemoryEntry)
     .filter((entry) => entry.status !== 'rejected')
     .map((entry) => `- [${memoryTypeLabels[entry.type]} / ${memoryStatusText[entry.status ?? 'draft']}] ${entry.title}: ${entry.content}`)
     .join('\n')
+  const chapterTaskText = formatChapterTaskForPrompt(chapterTask)
   if (target === 'rewrite') {
     const selectedText = selectedRewriteText.trim()
     return `你是中文网文编辑和章节改稿助手。请基于作品资料、长篇记忆和当前章节，输出“改写 / 扩写 / 精修”建议。
@@ -4165,6 +5781,9 @@ ${loreText || '暂无'}
 
 【长篇记忆摘要】
 ${memoryText || '暂无'}
+
+【本章任务卡】
+${chapterTaskText}
 
 【当前章节】
 标题：${chapter.title || work.chapterTitle || '未命名章节'}
@@ -4219,10 +5838,28 @@ ${loreText || '暂无'}
 【长篇记忆摘要】
 ${memoryText || '暂无'}
 
+【本章任务卡】
+${chapterTaskText}
+
 【输出格式】
 ${target === 'check'
   ? '检查结果：\n- 类型：人物 OOC / 设定冲突 / 时间线矛盾 / 伏笔未回收 / 情绪推进异常 / 章节目标偏离\n  严重程度：高风险 / 中风险 / 低风险\n  位置：\n  问题：\n  建议：'
   : '记忆条目：\n- 类型：已发生事件 / 人物状态变化 / 世界观事实 / 未回收伏笔 / 最近章节摘要 / 禁止违背设定\n  标题：\n  内容：'}`
+}
+
+function formatChapterTaskForPrompt(task?: ChapterTask) {
+  if (!task) return '暂无。请只基于作者提供的作品资料判断，不要擅自补充关键设定。'
+  return [
+    `状态：${chapterTaskStatusText[task.status]}`,
+    `核心目标：${task.coreGoal || '暂无'}`,
+    `情绪目标：${task.emotionGoal || '暂无'}`,
+    `目标字数：${task.targetWords || '未设置'}`,
+    `故事线：${task.storyline || '暂无'}`,
+    `卷内节点：${task.volumeNode || '暂无'}`,
+    `必须完成：${task.mustDo.join('；') || '暂无'}`,
+    `禁止事项：${task.forbidden.join('；') || '暂无'}`,
+    `节奏步骤：${task.rhythmSteps.join(' -> ') || '暂无'}`,
+  ].join('\n')
 }
 
 function formatWebAiRewriteResult(raw: string, instruction: string, selectedText = '') {

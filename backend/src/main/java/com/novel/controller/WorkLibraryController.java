@@ -9,6 +9,8 @@ import com.novel.dto.WorkSnapshotRequest;
 import com.novel.dto.WorkSnapshotResponse;
 import com.novel.dto.WorkChapterSnapshot;
 import com.novel.dto.WorkSnapshotVersionResponse;
+import com.novel.dto.WorkVersionChapterDiff;
+import com.novel.dto.WorkVersionCompareResponse;
 import com.novel.entity.Chapter;
 import com.novel.entity.Novel;
 import com.novel.entity.WorkSnapshotVersion;
@@ -22,9 +24,12 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.LinkedHashMap;
 import java.util.stream.Collectors;
@@ -66,6 +71,24 @@ public class WorkLibraryController {
                 .toList());
     }
 
+    @GetMapping("/versions/compare")
+    @Operation(summary = "比较两个云端作品版本")
+    public Result<WorkVersionCompareResponse> compareVersions(@RequestParam UUID baseVersionId, @RequestParam UUID targetVersionId) {
+        UUID userId = requireUserId();
+        WorkSnapshotVersion base = workSnapshotVersionMapper.selectById(baseVersionId);
+        WorkSnapshotVersion target = workSnapshotVersionMapper.selectById(targetVersionId);
+        if (base == null || target == null) {
+            return Result.error(404, "版本不存在");
+        }
+        if (!userId.equals(base.getUserId()) || !userId.equals(target.getUserId())) {
+            return Result.error(403, "无权访问该版本");
+        }
+        if (!Objects.equals(base.getFrontendWorkId(), target.getFrontendWorkId())) {
+            return Result.error(400, "只能比较同一作品的版本");
+        }
+        return Result.success(compareVersionPayloads(base, target));
+    }
+
     @PostMapping
     @Operation(summary = "保存或更新作品快照")
     @Transactional
@@ -98,9 +121,11 @@ public class WorkLibraryController {
             novelService.updateById(novel);
         }
 
-        syncChapters(novel.getId(), request);
-        saveSnapshotVersion(userId, novel, normalizeChapterSnapshots(request), request);
-        return Result.success(toResponse(novelService.getById(novel.getId())));
+        List<WorkChapterSnapshot> syncedChapters = syncChapters(novel.getId(), request);
+        saveSnapshotVersion(userId, novel, syncedChapters, request);
+        WorkSnapshotResponse response = toResponse(novelService.getById(novel.getId()));
+        response.setChapters(syncedChapters);
+        return Result.success(response);
     }
 
     @DeleteMapping("/{frontendWorkId}")
@@ -114,26 +139,38 @@ public class WorkLibraryController {
         return Result.success();
     }
 
-    private void syncChapters(UUID novelId, WorkSnapshotRequest request) {
+    private List<WorkChapterSnapshot> syncChapters(UUID novelId, WorkSnapshotRequest request) {
         List<WorkChapterSnapshot> snapshots = normalizeChapterSnapshots(request);
         if (snapshots.isEmpty()) {
-            return;
+            return snapshots;
         }
 
-        Map<Integer, Chapter> existingByNumber = chapterService.listByNovelId(novelId).stream()
+        List<Chapter> existingChapters = chapterService.listByNovelId(novelId);
+        Map<UUID, Chapter> existingById = existingChapters.stream()
+                .filter(chapter -> chapter.getId() != null)
+                .collect(Collectors.toMap(Chapter::getId, chapter -> chapter, (left, right) -> left, LinkedHashMap::new));
+        Map<Integer, Chapter> existingByNumber = existingChapters.stream()
                 .collect(Collectors.toMap(Chapter::getChapterNumber, chapter -> chapter, (left, right) -> left, LinkedHashMap::new));
+        Set<UUID> requestedIds = snapshots.stream()
+                .map(WorkChapterSnapshot::getBackendChapterId)
+                .filter(id -> id != null)
+                .collect(Collectors.toSet());
         Set<Integer> requestedNumbers = snapshots.stream()
                 .map(WorkChapterSnapshot::getChapterNumber)
                 .collect(Collectors.toSet());
 
         for (WorkChapterSnapshot snapshot : snapshots) {
-            Chapter chapter = existingByNumber.get(snapshot.getChapterNumber());
+            Chapter chapter = snapshot.getBackendChapterId() == null ? null : existingById.get(snapshot.getBackendChapterId());
+            if (chapter == null) {
+                chapter = existingByNumber.get(snapshot.getChapterNumber());
+            }
             if (chapter == null) {
                 chapter = new Chapter();
                 chapter.setNovelId(novelId);
                 chapter.setChapterNumber(snapshot.getChapterNumber());
                 chapter.setCreateTime(LocalDateTime.now());
             }
+            chapter.setChapterNumber(snapshot.getChapterNumber());
             chapter.setTitle(isBlank(snapshot.getTitle()) ? "第 " + snapshot.getChapterNumber() + " 章" : snapshot.getTitle());
             chapter.setContent(snapshot.getContent() == null ? "" : snapshot.getContent());
             chapter.setStatus("published".equals(snapshot.getStatus()) ? "published" : "draft");
@@ -143,13 +180,15 @@ public class WorkLibraryController {
             } else {
                 chapterService.updateById(chapter);
             }
+            snapshot.setBackendChapterId(chapter.getId());
         }
 
         if (request.getChapters() != null && !request.getChapters().isEmpty()) {
-            existingByNumber.values().stream()
-                    .filter(chapter -> !requestedNumbers.contains(chapter.getChapterNumber()))
+            existingChapters.stream()
+                    .filter(chapter -> !requestedIds.contains(chapter.getId()) && !requestedNumbers.contains(chapter.getChapterNumber()))
                     .forEach(chapter -> chapterService.removeById(chapter.getId()));
         }
+        return snapshots;
     }
 
     private List<WorkChapterSnapshot> normalizeChapterSnapshots(WorkSnapshotRequest request) {
@@ -190,6 +229,7 @@ public class WorkLibraryController {
 
     private WorkChapterSnapshot toChapterSnapshot(Chapter chapter) {
         WorkChapterSnapshot snapshot = new WorkChapterSnapshot();
+        snapshot.setBackendChapterId(chapter.getId());
         snapshot.setChapterNumber(chapter.getChapterNumber());
         snapshot.setTitle(chapter.getTitle());
         snapshot.setContent(chapter.getContent());
@@ -243,6 +283,109 @@ public class WorkLibraryController {
         return response;
     }
 
+    private WorkVersionCompareResponse compareVersionPayloads(WorkSnapshotVersion base, WorkSnapshotVersion target) {
+        List<WorkChapterSnapshot> baseChapters = readChapters(base.getChaptersPayload());
+        List<WorkChapterSnapshot> targetChapters = readChapters(target.getChaptersPayload());
+        Map<String, WorkChapterSnapshot> baseByKey = indexChapters(baseChapters);
+        Map<String, WorkChapterSnapshot> targetByKey = indexChapters(targetChapters);
+        Set<String> keys = new LinkedHashSet<>();
+        keys.addAll(baseByKey.keySet());
+        keys.addAll(targetByKey.keySet());
+
+        int addedCount = 0;
+        int removedCount = 0;
+        int changedCount = 0;
+        int unchangedCount = 0;
+        List<WorkVersionChapterDiff> diffs = new ArrayList<>();
+
+        for (String key : keys) {
+            WorkChapterSnapshot oldChapter = baseByKey.get(key);
+            WorkChapterSnapshot newChapter = targetByKey.get(key);
+            String status;
+            if (oldChapter == null) {
+                status = "added";
+                addedCount += 1;
+            } else if (newChapter == null) {
+                status = "removed";
+                removedCount += 1;
+            } else if (sameChapterSnapshot(oldChapter, newChapter)) {
+                status = "unchanged";
+                unchangedCount += 1;
+            } else {
+                status = "changed";
+                changedCount += 1;
+            }
+            diffs.add(toChapterDiff(key, status, oldChapter, newChapter));
+        }
+
+        WorkVersionCompareResponse response = new WorkVersionCompareResponse();
+        response.setBaseVersionId(base.getId());
+        response.setTargetVersionId(target.getId());
+        response.setWordDelta(wordCount(targetChapters) - wordCount(baseChapters));
+        response.setChapterDelta(targetChapters.size() - baseChapters.size());
+        response.setAddedCount(addedCount);
+        response.setRemovedCount(removedCount);
+        response.setChangedCount(changedCount);
+        response.setUnchangedCount(unchangedCount);
+        response.setChapterDiffs(diffs);
+        return response;
+    }
+
+    private Map<String, WorkChapterSnapshot> indexChapters(List<WorkChapterSnapshot> chapters) {
+        Map<String, WorkChapterSnapshot> result = new LinkedHashMap<>();
+        for (WorkChapterSnapshot chapter : chapters) {
+            result.put(chapterKey(chapter), chapter);
+        }
+        return result;
+    }
+
+    private String chapterKey(WorkChapterSnapshot chapter) {
+        if (chapter == null) {
+            return "chapter:unknown";
+        }
+        if (chapter.getBackendChapterId() != null) {
+            return "backend:" + chapter.getBackendChapterId();
+        }
+        if (!isBlank(chapter.getFrontendChapterId())) {
+            return "frontend:" + chapter.getFrontendChapterId();
+        }
+        return "number:" + chapter.getChapterNumber();
+    }
+
+    private boolean sameChapterSnapshot(WorkChapterSnapshot oldChapter, WorkChapterSnapshot newChapter) {
+        return Objects.equals(blankToDefault(oldChapter.getTitle(), ""), blankToDefault(newChapter.getTitle(), ""))
+                && Objects.equals(blankToDefault(oldChapter.getContent(), ""), blankToDefault(newChapter.getContent(), ""))
+                && Objects.equals(blankToDefault(oldChapter.getStatus(), ""), blankToDefault(newChapter.getStatus(), ""));
+    }
+
+    private WorkVersionChapterDiff toChapterDiff(String key, String status, WorkChapterSnapshot oldChapter, WorkChapterSnapshot newChapter) {
+        String oldContent = oldChapter == null ? "" : blankToDefault(oldChapter.getContent(), "");
+        String newContent = newChapter == null ? "" : blankToDefault(newChapter.getContent(), "");
+        WorkVersionChapterDiff diff = new WorkVersionChapterDiff();
+        diff.setKey(key);
+        diff.setStatus(status);
+        diff.setTitle(firstNonBlank(
+                newChapter == null ? "" : newChapter.getTitle(),
+                oldChapter == null ? "" : oldChapter.getTitle(),
+                "未命名章节"
+        ));
+        diff.setOldWords(countWords(oldContent));
+        diff.setNewWords(countWords(newContent));
+        diff.setOldContent(oldContent);
+        diff.setNewContent(newContent);
+        return diff;
+    }
+
+    private int wordCount(List<WorkChapterSnapshot> chapters) {
+        return chapters.stream()
+                .mapToInt(chapter -> countWords(chapter.getContent()))
+                .sum();
+    }
+
+    private int countWords(String content) {
+        return content == null ? 0 : content.replaceAll("\\s+", "").length();
+    }
+
     private String writeJson(List<WorkChapterSnapshot> chapters) {
         try {
             return objectMapper.writeValueAsString(chapters);
@@ -273,6 +416,7 @@ public class WorkLibraryController {
                     : source.getChapterNumber();
             fallbackNumber = Math.max(fallbackNumber + 1, chapterNumber + 1);
             snapshot.setFrontendChapterId(source.getFrontendChapterId());
+            snapshot.setBackendChapterId(source.getBackendChapterId());
             snapshot.setChapterNumber(chapterNumber);
             snapshot.setTitle(source.getTitle());
             snapshot.setContent(source.getContent());
@@ -299,5 +443,18 @@ public class WorkLibraryController {
 
     private boolean isBlank(String value) {
         return value == null || value.trim().isEmpty();
+    }
+
+    private String blankToDefault(String value, String fallback) {
+        return isBlank(value) ? fallback : value.trim();
+    }
+
+    private String firstNonBlank(String... values) {
+        for (String value : values) {
+            if (!isBlank(value)) {
+                return value.trim();
+            }
+        }
+        return "";
     }
 }
